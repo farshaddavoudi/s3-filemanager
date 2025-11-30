@@ -1,4 +1,3 @@
-
 <p align="center">
   <img src="docs/banner.svg" width="100%" />
 </p>
@@ -65,7 +64,7 @@ While MinIO is the first supported backend, the architecture is cloud-agnostic a
 ### Core
 - 🗂 Modern web file manager UI  
 - 📁 Browse, upload, download, rename, delete, move  
-- 🔍 Search, sort, and right-click menus  
+- 🔍 Search, sort, and right-click context menu  
 
 ### Storage Backends
 - 🟦 Built-in MinIO backend  
@@ -78,23 +77,25 @@ While MinIO is the first supported backend, the architecture is cloud-agnostic a
 - 🧩 Policy engine with `IAccessPolicyProvider`
 
 ### Authentication
-- 🧱 OIDC/SSO integration (Keycloak, Auth0, Azure AD...)  
-- 🔐 Local user mode (optional)  
-- 👁 Public read-only mode  
+- 🧱 OIDC/SSO integration (Keycloak, Auth0, Azure AD, Okta, etc.)  
+- 🔐 Local username/password mode (optional)  
+- 👁 Public read-only mode (optional)
 
 ### Extensibility
-- 🧱 Backend abstraction  
+- 🧱 Storage backend abstraction  
 - 🧾 Custom audit sinks (`IAuditSink`)  
-- 📂 Configurable virtual folder structure  
+- 📂 Configurable root mapping / virtual folder structure  
 
 ### Deployment
 - 🐳 Official Docker image  
-- 🔧 Env-based configuration  
+- 🔧 Environment variable configuration  
 - ☸️ Kubernetes support (planned)
 
 ---
 
 ## 🚀 Quickstart
+
+### Run with Docker (MinIO backend)
 
 ```bash
 docker run -d \
@@ -107,11 +108,23 @@ docker run -d \
   farshaddavoudi/s3-filemanager:latest
 ```
 
+Open:
+
+```text
+http://localhost:8080
+```
+
 ---
 
 ## ⚙️ Configuration
 
-Example environment variables:
+All settings can be controlled via:
+
+- `appsettings.json`
+- Environment variables
+- Docker secrets (recommended)
+
+Example:
 
 ```bash
 STORAGE__BACKEND=Minio
@@ -125,7 +138,7 @@ AUTH__OIDC__AUTHORITY=https://sso.example.com/realms/main
 
 ## 🏛 Architecture
 
-```
+```text
 +---------------------------+
 |        Web UI (JS)        |
 +------------+--------------+
@@ -155,36 +168,43 @@ AUTH__OIDC__AUTHORITY=https://sso.example.com/realms/main
 ## 🧩 Extension Points
 
 ### `IObjectStorageBackend`
-Handles listing, uploading, deleting, moving, downloading.
+Provides the physical storage actions:
+- List  
+- Upload  
+- Move  
+- Delete  
+- Download  
 
 ### `IAccessPolicyProvider`
-Evaluates user/role permissions for a given path.
+Handles path-based access rules per user/role.
 
 ### `IAuditSink`
-Optional external audit logging pipeline.
+Externalized audit logging for read/write operations.
 
 ---
 
 ## 🛣 Roadmap
 
-- [ ] Azure Blob backend  
+- [ ] Azure Blob Storage backend  
 - [ ] AWS S3/Ceph/Wasabi/Backblaze backends  
-- [ ] Thumbnails & previews  
-- [ ] Shareable links  
-- [ ] Admin dashboard  
-- [ ] OIDC claim mapping  
-- [ ] Helm chart  
-- [ ] REST API client  
+- [ ] Thumbnail & preview pipeline  
+- [ ] Shareable links (pre-signed URLs)  
+- [ ] Virtual drive support  
+- [ ] Administration dashboard  
+- [ ] Advanced OIDC features (claims mapping)  
+- [ ] Helm chart for Kubernetes  
+- [ ] REST API client library  
 
 ---
 
 ## 🤝 Contributing
 
-Issues and PRs are welcome.  
-To create a custom backend, implement `IObjectStorageBackend` and submit a PR.
+Pull requests and suggestions are welcome!
+
+To add a new backend, implement the `IObjectStorageBackend` interface and open a PR.
 
 ---
 
 ## 📄 License
 
-MIT License — free for commercial and organizational use.
+This project is licensed under the **MIT License** — free for personal, commercial, and organizational use.
