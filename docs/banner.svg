@@ -1,0 +1,18 @@
+<svg width="1200" height="260" viewBox="0 0 1200 260" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#2E86FF"></stop>
+      <stop offset="100%" stop-color="#00C2FF"></stop>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="260" fill="url(#grad)"></rect>
+
+  <text x="50%" y="48%" font-family="Segoe UI, Roboto, sans-serif" font-size="62" font-weight="700" fill="#FFFFFF" text-anchor="middle">
+    S3 File Manager
+  </text>
+
+  <text x="50%" y="78%" font-family="Segoe UI, Roboto, sans-serif" font-size="28" fill="#E8F6FF" text-anchor="middle">
+    A self-hosted web file manager for S3 &amp; MinIO • Extensible backends • Access policies • Docker-ready
+  </text>
+</svg>
