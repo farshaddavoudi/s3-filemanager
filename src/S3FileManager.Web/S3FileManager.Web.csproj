@@ -9,6 +9,12 @@
   <ItemGroup>
     <ProjectReference Include="..\S3FileManager.Core\S3FileManager.Core.csproj" />
     <ProjectReference Include="..\S3FileManager.Storage.Minio\S3FileManager.Storage.Minio.csproj" />
+    <PackageReference Include="Syncfusion.Blazor" Version="26.2.14">
+      <Aliases>sfbase</Aliases>
+    </PackageReference>
+    <PackageReference Include="Syncfusion.Blazor.FileManager" Version="26.2.14">
+      <Aliases>sfmanager</Aliases>
+    </PackageReference>
   </ItemGroup>
 
 </Project>

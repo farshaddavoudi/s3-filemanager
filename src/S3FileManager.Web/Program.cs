@@ -1,11 +1,22 @@
+extern alias sfbase;
+
 using S3FileManager.Core;
 using S3FileManager.Storage.Minio;
 using Minio;
+using Syncfusion.Licensing;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
+sfbase::Syncfusion.Blazor.SyncfusionBlazor.AddSyncfusionBlazor(builder.Services);
+// IMPORTANT: Syncfusion Blazor components require a valid Syncfusion license.
+// Register your own license key at startup; do NOT commit real keys.
+var syncfusionLicenseKey = builder.Configuration["Syncfusion:LicenseKey"];
+if (!string.IsNullOrWhiteSpace(syncfusionLicenseKey))
+{
+    SyncfusionLicenseProvider.RegisterLicense(syncfusionLicenseKey);
+}
 
 // Core abstractions
 builder.Services.AddSingleton<IAccessPolicyProvider, SimpleAllowAllAccessPolicyProvider>();

@@ -24,6 +24,12 @@ A modern, self-hosted web file manager for S3/MinIO — extensible backends, fle
 
 **S3 File Manager** is a self-hosted, extensible web application that delivers a modern file-explorer experience on top of any **S3-compatible object storage**, starting with native support for **MinIO**.
 
+**Tech stack**
+- .NET 10 / ASP.NET Core (C#)
+- Blazor-based web UI
+- Syncfusion Blazor File Manager as the primary UI component library
+- S3-compatible backends (MinIO first)
+
 It is designed with strong architectural boundaries:
 
 - 🔌 **Pluggable storage backends** (`IObjectStorageBackend`)
@@ -85,6 +91,10 @@ While MinIO is the first supported backend, the architecture is cloud-agnostic a
 - 🧱 Storage backend abstraction  
 - 🧾 Custom audit log providers (`IAuditLogProvider`)  
 - 📂 Configurable root mapping / virtual folder structure  
+
+### UI & Components
+- UI built on Syncfusion Blazor File Manager for a Windows-Explorer-like experience (toolbar, navigation pane, context menu, drag-and-drop, upload/download, rename, move, delete, etc.)
+- The Syncfusion File Manager is wired to the backend `IObjectStorageBackend` so it can operate against MinIO / other S3-compatible storage.
 
 ### Deployment
 - 🐳 Official Docker image  
@@ -181,6 +191,19 @@ Handles path-based access rules per user/role.
 ### `IAuditLogProvider`
 Externalized audit logging for read/write operations.
 
+## ?? Syncfusion Licensing
+
+This project depends on Syncfusion Blazor components (including the File Manager).
+- Syncfusion packages are commercial and require a valid license (paid or eligible Community License).
+- The s3-filemanager source is MIT-licensed, but it does **not** grant any license to Syncfusion products.
+- To run the UI with Syncfusion File Manager you must obtain your own Syncfusion Blazor license and register the key at startup (e.g., via configuration):
+- Set the environment variable `Syncfusion__LicenseKey` (double underscore) or the config key `Syncfusion:LicenseKey`, and register it at startup:
+  - `SyncfusionLicenseProvider.RegisterLicense(builder.Configuration["Syncfusion:LicenseKey"]);`
+- No Syncfusion license key is included in this repository. Do not commit your own license key to version control.
+- Individual developers and qualifying small companies may be eligible for the free Community License: https://www.syncfusion.com/products/communitylicense
+- See Syncfusion Blazor licensing guidance: https://blazor.syncfusion.com/documentation/common/licensing/
+- File Manager product page: https://www.syncfusion.com/blazor-components/blazor-file-manager
+
 ---
 
 ## 🛣 Roadmap
@@ -208,3 +231,10 @@ To add a new backend, implement the `IObjectStorageBackend` interface and open a
 ## 📄 License
 
 This project is licensed under the **MIT License** — free for personal, commercial, and organizational use.
+
+
+
+
+
+
+
