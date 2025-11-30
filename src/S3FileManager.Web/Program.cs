@@ -1,15 +1,16 @@
-extern alias sfbase;
-
+using Minio;
 using S3FileManager.Core;
 using S3FileManager.Storage.Minio;
-using Minio;
+using Syncfusion.Blazor;
 using Syncfusion.Licensing;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
-sfbase::Syncfusion.Blazor.SyncfusionBlazor.AddSyncfusionBlazor(builder.Services);
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+builder.Services.AddSyncfusionBlazor();
 // IMPORTANT: Syncfusion Blazor components require a valid Syncfusion license.
 // Register your own license key at startup; do NOT commit real keys.
 var syncfusionLicenseKey = builder.Configuration["Syncfusion:LicenseKey"];
@@ -26,14 +27,29 @@ builder.Services.AddSingleton<IAuditLogProvider, DefaultConsoleAuditLogProvider>
 builder.Services.AddSingleton<IMinioClient>(sp =>
 {
     var cfg = sp.GetRequiredService<IConfiguration>();
-    var endpoint  = cfg["MINIO__ENDPOINT"] ?? "http://localhost:9000";
+    var endpoint = cfg["MINIO__ENDPOINT"] ?? "http://localhost:9000";
     var accessKey = cfg["MINIO__ACCESSKEY"] ?? "minioadmin";
     var secretKey = cfg["MINIO__SECRETKEY"] ?? "minioadmin";
 
-    return new MinioClient()
-        .WithEndpoint(endpoint)
-        .WithCredentials(accessKey, secretKey)
-        .Build();
+    var client = new MinioClient()
+        .WithCredentials(accessKey, secretKey);
+
+    if (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
+    {
+        if (uri.IsDefaultPort)
+            client = client.WithEndpoint(uri.Host);
+        else
+            client = client.WithEndpoint(uri.Host, uri.Port);
+
+        if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
+            client = client.WithSSL();
+    }
+    else
+    {
+        client = client.WithEndpoint(endpoint);
+    }
+
+    return client.Build();
 });
 
 builder.Services.AddSingleton<IObjectStorageBackend>(sp =>
@@ -46,10 +62,14 @@ builder.Services.AddSingleton<IObjectStorageBackend>(sp =>
 
 var app = builder.Build();
 
+app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapBlazorHub();
+app.MapFallbackToPage("/_Host");
+app.MapRazorPages();
 
 app.Run();
 

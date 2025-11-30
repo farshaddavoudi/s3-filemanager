@@ -1,20 +1,16 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>2773ec30-ecc9-4f14-b7fc-16a322026a0d</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\S3FileManager.Core\S3FileManager.Core.csproj" />
     <ProjectReference Include="..\S3FileManager.Storage.Minio\S3FileManager.Storage.Minio.csproj" />
-    <PackageReference Include="Syncfusion.Blazor" Version="26.2.14">
-      <Aliases>sfbase</Aliases>
-    </PackageReference>
-    <PackageReference Include="Syncfusion.Blazor.FileManager" Version="26.2.14">
-      <Aliases>sfmanager</Aliases>
-    </PackageReference>
+    <PackageReference Include="Syncfusion.Blazor.FileManager" Version="26.2.14" />
   </ItemGroup>
 
 </Project>

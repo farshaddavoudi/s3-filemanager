@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Text.Json;
 using S3FileManager.Core;
 
 namespace S3FileManager.Web.Controllers;
@@ -32,27 +33,208 @@ public class FileManagerController : ControllerBase
         );
     }
 
-    [HttpGet("list")]
-    public async Task<ActionResult<IReadOnlyList<FileItem>>> List([FromQuery] string? path, CancellationToken cancellationToken)
+    [HttpPost("operations")]
+    public async Task<IActionResult> Operations([FromForm] FileManagerRequest request, CancellationToken cancellationToken)
     {
         var user = BuildUserContext();
-        var normalizedPath = path ?? "/";
+        var path = NormalizePath(request.Path);
+        var perms = await _accessPolicy.GetPermissionsAsync(user, path, cancellationToken);
 
-        var perms = await _accessPolicy.GetPermissionsAsync(user, normalizedPath, cancellationToken);
-        if (!perms.CanRead)
-            return Forbid();
+        switch (request.Action?.ToLowerInvariant())
+        {
+            case "read":
+                if (!perms.CanRead) return Forbid();
+                var items = await _storage.ListAsync(path, user, cancellationToken);
+                await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "List", path), cancellationToken);
+                var cwd = MapToCwd(path, items);
+                return Ok(new { cwd, files = items.Select(MapToFileManagerItem).ToList() });
 
-        var items = await _storage.ListAsync(normalizedPath, user, cancellationToken);
+            case "create":
+                if (!perms.CanWrite && !perms.CanUpload) return Forbid();
+                var newFolderName = request.NewName ?? "New Folder";
+                var folderPath = EnsureFolder(Combine(path, newFolderName));
+                await _storage.UploadAsync(folderPath, Stream.Null, user, cancellationToken);
+                await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "CreateFolder", folderPath), cancellationToken);
+                return Ok(new { result = "success" });
 
-        await _audit.LogAsync(new AuditEvent(
-            Timestamp: DateTimeOffset.UtcNow,
-            UserId: user.UserId,
-            Action: "List",
-            Path: normalizedPath
-        ), cancellationToken);
+            case "delete":
+                if (!perms.CanDelete) return Forbid();
+                foreach (var name in request.Names ?? Enumerable.Empty<string>())
+                {
+                    var deletePath = Combine(path, name);
+                    await _storage.DeleteAsync(deletePath, user, cancellationToken);
+                    await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Delete", deletePath), cancellationToken);
+                }
+                return Ok(new { result = "success" });
 
-        return Ok(items);
+            case "rename":
+                if (!perms.CanWrite) return Forbid();
+                var source = Combine(path, request.Names?.FirstOrDefault() ?? string.Empty);
+                var destination = Combine(GetDirectoryPath(source), request.NewName ?? string.Empty);
+                await _storage.MoveAsync(source, destination, user, cancellationToken);
+                await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Rename", $"{source} -> {destination}"), cancellationToken);
+                return Ok(new { result = "success" });
+
+            case "move":
+                if (!perms.CanWrite) return Forbid();
+                foreach (var name in request.Names ?? Enumerable.Empty<string>())
+                {
+                    var sourcePath = Combine(path, name);
+                    var destPath = Combine(NormalizePath(request.TargetPath), name);
+                    await _storage.MoveAsync(sourcePath, destPath, user, cancellationToken);
+                    await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Move", $"{sourcePath} -> {destPath}"), cancellationToken);
+                }
+                return Ok(new { result = "success" });
+
+            default:
+                return BadRequest(new { error = "Unsupported action" });
+        }
     }
 
-    // TODO: add upload, delete, move, download endpoints.
+    [HttpPost("upload")]
+    [RequestSizeLimit(512_000_000)] // 512 MB default cap; adjust as needed
+    public async Task<IActionResult> Upload([FromForm] string? path, CancellationToken cancellationToken)
+    {
+        var user = BuildUserContext();
+        var normalizedPath = NormalizePath(path);
+        var perms = await _accessPolicy.GetPermissionsAsync(user, normalizedPath, cancellationToken);
+        if (!perms.CanUpload) return Forbid();
+
+        foreach (var formFile in Request.Form.Files)
+        {
+            var targetPath = Combine(normalizedPath, formFile.FileName);
+            await using var stream = formFile.OpenReadStream();
+            await _storage.UploadAsync(targetPath, stream, user, cancellationToken);
+            await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Upload", targetPath), cancellationToken);
+        }
+
+        return Ok(new { result = "success" });
+    }
+
+    [HttpPost("download")]
+    public async Task<IActionResult> Download([FromForm] string? path, [FromForm] string? downloadInput, CancellationToken cancellationToken)
+    {
+        var user = BuildUserContext();
+        var requestedPath = ResolveDownloadPath(path, downloadInput);
+        var normalizedPath = NormalizePath(requestedPath);
+
+        var perms = await _accessPolicy.GetPermissionsAsync(user, normalizedPath, cancellationToken);
+        if (!perms.CanRead) return Forbid();
+
+        var stream = await _storage.OpenReadAsync(normalizedPath, user, cancellationToken);
+        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Download", normalizedPath), cancellationToken);
+
+        var fileName = Path.GetFileName(normalizedPath.TrimEnd('/'));
+        return File(stream, "application/octet-stream", fileName);
+    }
+
+    private static string NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "/";
+        var cleaned = path.Replace("\\", "/");
+        if (!cleaned.StartsWith("/")) cleaned = "/" + cleaned;
+        return cleaned;
+    }
+
+    private static string Combine(string basePath, string name)
+    {
+        var trimmedBase = basePath.TrimEnd('/');
+        var trimmedName = name.TrimStart('/');
+        return $"{trimmedBase}/{trimmedName}";
+    }
+
+    private static string EnsureFolder(string path)
+    {
+        return path.EndsWith("/") ? path : path + "/";
+    }
+
+    private static string GetDirectoryPath(string path)
+    {
+        var normalized = NormalizePath(path);
+        var lastSlash = normalized.LastIndexOf('/');
+        if (lastSlash <= 0) return "/";
+        return normalized[..lastSlash];
+    }
+
+    private static object MapToFileManagerItem(FileItem item) => new
+    {
+        name = item.Name,
+        isFile = !item.IsDirectory,
+        size = item.Size ?? 0,
+        dateModified = item.LastModified ?? DateTimeOffset.UtcNow,
+        dateCreated = item.LastModified ?? DateTimeOffset.UtcNow,
+        hasChild = false,
+        type = item.IsDirectory ? "Folder" : Path.GetExtension(item.Name),
+        filterPath = GetDirectoryPath(item.Path),
+        path = item.Path
+    };
+
+    private static object MapToCwd(string path, IReadOnlyList<FileItem> items)
+    {
+        var normalized = NormalizePath(path);
+        var name = GetNameFromPath(normalized);
+        var hasChild = items.Any(i => i.IsDirectory);
+        return new
+        {
+            name = string.IsNullOrWhiteSpace(name) ? "/" : name,
+            size = 0,
+            dateModified = DateTimeOffset.UtcNow,
+            dateCreated = DateTimeOffset.UtcNow,
+            hasChild,
+            isFile = false,
+            type = "Folder",
+            filterPath = GetDirectoryPath(normalized),
+            path = normalized
+        };
+    }
+
+    private static string GetNameFromPath(string path)
+    {
+        var normalized = NormalizePath(path).TrimEnd('/');
+        if (normalized == "/") return "/";
+        var last = normalized.LastIndexOf('/');
+        return last >= 0 ? normalized[(last + 1)..] : normalized;
+    }
+
+    private static string? ResolveDownloadPath(string? path, string? downloadInput)
+    {
+        if (!string.IsNullOrWhiteSpace(path)) return path;
+        if (!string.IsNullOrWhiteSpace(downloadInput))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<DownloadInput>(downloadInput);
+                var selected = parsed?.Items?.FirstOrDefault();
+                if (!string.IsNullOrWhiteSpace(selected?.Name))
+                {
+                    return Combine(NormalizePath(selected.Path ?? "/"), selected.Name);
+                }
+            }
+            catch
+            {
+                // ignore parse errors and fall through
+            }
+        }
+        return "/";
+    }
+
+    public sealed class FileManagerRequest
+    {
+        public string? Action { get; set; }
+        public string? Path { get; set; }
+        public string? TargetPath { get; set; }
+        public string? NewName { get; set; }
+        public List<string>? Names { get; set; }
+    }
+
+    private sealed class DownloadInput
+    {
+        public List<DownloadItem>? Items { get; set; }
+    }
+
+    private sealed class DownloadItem
+    {
+        public string? Name { get; set; }
+        public string? Path { get; set; }
+    }
 }

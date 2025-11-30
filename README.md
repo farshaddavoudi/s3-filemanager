@@ -26,7 +26,7 @@ A modern, self-hosted web file manager for S3/MinIO — extensible backends, fle
 
 **Tech stack**
 - .NET 10 / ASP.NET Core (C#)
-- Blazor-based web UI
+- Blazor Server-based web UI
 - Syncfusion Blazor File Manager as the primary UI component library
 - S3-compatible backends (MinIO first)
 
