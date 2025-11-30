@@ -13,6 +13,6 @@
   </text>
 
   <text x="50%" y="78%" font-family="Segoe UI, Roboto, sans-serif" font-size="28" fill="#E8F6FF" text-anchor="middle">
-    A self-hosted web file manager for S3 &amp; MinIO • Extensible backends • Access policies • Docker-ready
+    A self-hosted web file manager for MinIO • Access policies • Docker-ready
   </text>
 </svg>
