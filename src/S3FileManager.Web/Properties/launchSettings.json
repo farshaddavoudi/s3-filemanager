@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "S3FileManager.Web": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:12624;http://localhost:12625"
+    }
+  }
+}

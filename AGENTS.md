@@ -137,3 +137,9 @@ If you are an AI assistant working in this repo, default to:
 3. Encapsulate vendor-specific details in their own backend implementations.
 4. Think in terms of object-storage semantics (prefixes instead of real folders).
 5. Produce clean, documented code suitable for open-source use.
+
+## 9. Git Workflow & Commit/Branch Conventions
+
+- Use **Conventional Commits**. Preferred types: `feat`, `fix`, `chore`, `docs`, `build`, `ci`, `refactor`, `test`. Subject in imperative, <= 72 chars; scope optional (e.g., `feat(web): add upload progress`).
+- Branch naming: `feature/<scope>`, `fix/<scope>`, `chore/<scope>`, or `release/<version>`.
+- Squash or rebase merges are fine; ensure final commit messages keep the Conventional Commit format.
