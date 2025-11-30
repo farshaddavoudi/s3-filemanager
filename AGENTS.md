@@ -4,7 +4,7 @@ This document explains how AI coding assistants (GitHub Copilot, ChatGPT, etc.) 
 
 The goal is to keep the project:
 - Architecturally clean
-- Extensible (backends, access policies, audit sinks)
+- Extensible (backends, access policies, audit log providers)
 - MinIO-first, but storage-agnostic
 - Safe and easy to deploy via Docker
 
@@ -49,7 +49,7 @@ Responsible for:
 - Combining user-level and role-level rules.
 - Potentially reading from config / JSON / DB.
 
-### 2.3 `IAuditSink`
+### 2.3 `IAuditLogProvider`
 
 Purpose: externalize audit logging.
 
@@ -60,7 +60,7 @@ Responsible for:
   - Delete
   - Move/Rename
 
-Default implementation can log to console; more advanced sinks can be added.
+Default implementation can log to console; more advanced providers can be added.
 
 ## 3. Layers & Responsibilities
 
@@ -76,7 +76,7 @@ AI agents must respect these architectural layers:
    - Handles authentication (OIDC/local).
    - Queries `IAccessPolicyProvider` for permissions.
    - Calls `IObjectStorageBackend` for storage operations.
-   - Logs via `IAuditSink`.
+   - Logs via `IAuditLogProvider`.
 
 3. **Storage Backend Implementations**
    - Implement `IObjectStorageBackend`.
@@ -99,7 +99,7 @@ AI agents must respect these architectural layers:
 
 - Use meaningful HTTP status codes (400/401/403/404/500).
 - Do not leak internal exception details in responses in production builds.
-- Log failures via `IAuditSink` or other logging mechanisms.
+- Log failures via `IAuditLogProvider` or other logging mechanisms.
 
 ## 5. Virtual Agent Roles
 
@@ -115,7 +115,7 @@ To reason about work division, consider these roles:
 
 Before making big changes, AI agents should consider:
 
-1. Does this break public interfaces (`IObjectStorageBackend`, `IAccessPolicyProvider`, `IAuditSink`)?
+1. Does this break public interfaces (`IObjectStorageBackend`, `IAccessPolicyProvider`, `IAuditLogProvider`)?
 2. Is this change MinIO-specific or generic?
 3. Does this introduce new responsibilities into an already large class?
 4. Can this be done in a backwards-compatible way?

@@ -9,7 +9,7 @@ builder.Services.AddControllers();
 
 // Core abstractions
 builder.Services.AddSingleton<IAccessPolicyProvider, SimpleAllowAllAccessPolicyProvider>();
-builder.Services.AddSingleton<IAuditSink, DefaultConsoleAuditSink>();
+builder.Services.AddSingleton<IAuditLogProvider, DefaultConsoleAuditLogProvider>();
 
 // MinIO backend wiring
 builder.Services.AddSingleton<IMinioClient>(sp =>

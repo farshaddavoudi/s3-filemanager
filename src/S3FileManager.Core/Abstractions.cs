@@ -56,7 +56,7 @@ public interface IAccessPolicyProvider
     Task<EffectivePermissions> GetPermissionsAsync(UserContext user, string path, CancellationToken cancellationToken = default);
 }
 
-public interface IAuditSink
+public interface IAuditLogProvider
 {
     Task LogAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default);
 }

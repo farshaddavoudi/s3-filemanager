@@ -9,12 +9,12 @@ public class FileManagerController : ControllerBase
 {
     private readonly IObjectStorageBackend _storage;
     private readonly IAccessPolicyProvider _accessPolicy;
-    private readonly IAuditSink _audit;
+    private readonly IAuditLogProvider _audit;
 
     public FileManagerController(
         IObjectStorageBackend storage,
         IAccessPolicyProvider accessPolicy,
-        IAuditSink audit)
+        IAuditLogProvider audit)
     {
         _storage = storage;
         _accessPolicy = accessPolicy;

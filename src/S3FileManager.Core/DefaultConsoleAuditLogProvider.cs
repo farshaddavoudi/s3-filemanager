@@ -2,7 +2,7 @@ using Microsoft.Extensions.Logging;
 
 namespace S3FileManager.Core;
 
-public sealed class DefaultConsoleAuditSink(ILogger<DefaultConsoleAuditSink> logger) : IAuditSink
+public sealed class DefaultConsoleAuditLogProvider(ILogger<DefaultConsoleAuditLogProvider> logger) : IAuditLogProvider
 {
     public Task LogAsync(AuditEvent auditEvent, CancellationToken cancellationToken = default)
     {

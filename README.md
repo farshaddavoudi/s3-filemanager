@@ -28,7 +28,7 @@ It is designed with strong architectural boundaries:
 
 - 🔌 **Pluggable storage backends** (`IObjectStorageBackend`)
 - 🔐 **Customizable access policies** (`IAccessPolicyProvider`)
-- 🧾 **Pluggable audit logging** (`IAuditSink`)
+- 🧾 **Pluggable audit logging** (`IAuditLogProvider`)
 - 🐳 **Fully Docker-ready**
 
 While MinIO is the first supported backend, the architecture is cloud-agnostic and intentionally built to support multiple object-storage providers in the future.
@@ -55,7 +55,7 @@ While MinIO is the first supported backend, the architecture is cloud-agnostic a
 - ⏳ Admin configuration dashboard  
 - ⏳ Kubernetes Helm chart  
 - ⏳ Localization  
-- ⏳ Advanced audit sinks (DB, MQ, webhooks)
+- ⏳ Advanced audit log providers (DB, MQ, webhooks)
 
 ---
 
@@ -83,7 +83,7 @@ While MinIO is the first supported backend, the architecture is cloud-agnostic a
 
 ### Extensibility
 - 🧱 Storage backend abstraction  
-- 🧾 Custom audit sinks (`IAuditSink`)  
+- 🧾 Custom audit log providers (`IAuditLogProvider`)  
 - 📂 Configurable root mapping / virtual folder structure  
 
 ### Deployment
@@ -178,7 +178,7 @@ Provides the physical storage actions:
 ### `IAccessPolicyProvider`
 Handles path-based access rules per user/role.
 
-### `IAuditSink`
+### `IAuditLogProvider`
 Externalized audit logging for read/write operations.
 
 ---

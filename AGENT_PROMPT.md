@@ -7,7 +7,7 @@ Context (do NOT change):
   - Web API (file operations, auth, access policies, audit)
   - Storage backends via IObjectStorageBackend
   - Access control via IAccessPolicyProvider
-  - Audit logging via IAuditSink
+  - Audit logging via IAuditLogProvider
 - The project is open-source and generic. Company-specific logic must NOT be added here.
 
 Your rules:
@@ -15,7 +15,7 @@ Your rules:
 2. Respect abstractions:
    - Use IObjectStorageBackend only for storage operations.
    - Use IAccessPolicyProvider for path-based permissions.
-   - Use IAuditSink for logging file actions.
+   - Use IAuditLogProvider for logging file actions.
 3. Keep MinIO-specific details inside the MinIO storage backend project.
 4. Use dependency injection and keep code testable.
 5. If the requested change conflicts with the architecture, explain why and propose a better approach.
