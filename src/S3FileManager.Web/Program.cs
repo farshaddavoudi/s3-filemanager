@@ -1,22 +1,31 @@
+using DotNetEnv;
 using Minio;
 using S3FileManager.Core;
 using S3FileManager.Storage.Minio;
+using S3FileManager.Web.Configuration;
 using Syncfusion.Blazor;
 using Syncfusion.Licensing;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Load .env into environment variables (walks up from current directory).
+Env.TraversePath().Load();
 
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddRazorPages();
 builder.Services.AddServerSideBlazor();
 builder.Services.AddSyncfusionBlazor();
+
+// Bind environment config
+var appConfig = AppConfig.FromEnvironment();
+builder.Services.AddSingleton(appConfig);
+
 // IMPORTANT: Syncfusion Blazor components require a valid Syncfusion license.
 // Register your own license key at startup; do NOT commit real keys.
-var syncfusionLicenseKey = builder.Configuration["Syncfusion:LicenseKey"];
-if (!string.IsNullOrWhiteSpace(syncfusionLicenseKey))
+if (!string.IsNullOrWhiteSpace(appConfig.SyncfusionLicenseKey))
 {
-    SyncfusionLicenseProvider.RegisterLicense(syncfusionLicenseKey);
+    SyncfusionLicenseProvider.RegisterLicense(appConfig.SyncfusionLicenseKey);
 }
 
 // Core abstractions
@@ -24,29 +33,23 @@ builder.Services.AddSingleton<IAccessPolicyProvider, SimpleAllowAllAccessPolicyP
 builder.Services.AddSingleton<IAuditLogProvider, DefaultConsoleAuditLogProvider>();
 
 // MinIO backend wiring
-builder.Services.AddSingleton<IMinioClient>(sp =>
+builder.Services.AddSingleton<IMinioClient>(_ =>
 {
-    var cfg = sp.GetRequiredService<IConfiguration>();
-    var endpoint = cfg["MINIO__ENDPOINT"] ?? "http://localhost:9000";
-    var accessKey = cfg["MINIO__ACCESSKEY"] ?? "minioadmin";
-    var secretKey = cfg["MINIO__SECRETKEY"] ?? "minioadmin";
-
     var client = new MinioClient()
-        .WithCredentials(accessKey, secretKey);
+        .WithCredentials(appConfig.MinioAccessKey, appConfig.MinioSecretKey);
 
-    if (Uri.TryCreate(endpoint, UriKind.Absolute, out var uri))
+    if (Uri.TryCreate(appConfig.MinioEndpoint, UriKind.Absolute, out var uri))
     {
-        if (uri.IsDefaultPort)
-            client = client.WithEndpoint(uri.Host);
-        else
-            client = client.WithEndpoint(uri.Host, uri.Port);
+        client = uri.IsDefaultPort
+            ? client.WithEndpoint(uri.Host)
+            : client.WithEndpoint(uri.Host, uri.Port);
 
         if (uri.Scheme.Equals("https", StringComparison.OrdinalIgnoreCase))
             client = client.WithSSL();
     }
     else
     {
-        client = client.WithEndpoint(endpoint);
+        client = client.WithEndpoint(appConfig.MinioEndpoint);
     }
 
     return client.Build();
@@ -54,10 +57,8 @@ builder.Services.AddSingleton<IMinioClient>(sp =>
 
 builder.Services.AddSingleton<IObjectStorageBackend>(sp =>
 {
-    var cfg = sp.GetRequiredService<IConfiguration>();
-    var bucket = cfg["MINIO__BUCKET"] ?? "ftp";
     var client = sp.GetRequiredService<IMinioClient>();
-    return new MinioStorageBackend(client, bucket);
+    return new MinioStorageBackend(client, appConfig.MinioBucket);
 });
 
 var app = builder.Build();
