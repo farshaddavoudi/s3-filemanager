@@ -10,8 +10,9 @@
   <ItemGroup>
     <ProjectReference Include="..\S3FileManager.Core\S3FileManager.Core.csproj" />
     <ProjectReference Include="..\S3FileManager.Storage.Minio\S3FileManager.Storage.Minio.csproj" />
-    <PackageReference Include="Syncfusion.Blazor.FileManager" Version="26.2.14" />
-    <PackageReference Include="DotNetEnv" Version="3.0.0" />
+    <PackageReference Include="Syncfusion.Blazor.FileManager" Version="31.2.16" />
+    <PackageReference Include="Syncfusion.Blazor.Themes" Version="31.2.16" />
+    <PackageReference Include="DotNetEnv" Version="3.1.1" />
   </ItemGroup>
 
 </Project>

@@ -63,6 +63,14 @@ builder.Services.AddSingleton<IObjectStorageBackend>(sp =>
 
 var app = builder.Build();
 
+// Configure the HTTP request pipeline
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Error");
+    app.UseHsts();
+}
+
+app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
 app.UseAuthorization();
@@ -70,7 +78,6 @@ app.UseAuthorization();
 app.MapControllers();
 app.MapBlazorHub();
 app.MapFallbackToPage("/_Host");
-app.MapRazorPages();
 
 app.Run();
 
