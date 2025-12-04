@@ -63,6 +63,31 @@ builder.Services.AddSingleton<IObjectStorageBackend>(sp =>
 
 var app = builder.Build();
 
+// Ensure MinIO bucket exists on startup
+try
+{
+    var minioClient = app.Services.GetRequiredService<IMinioClient>();
+    var bucketExistsArgs = new Minio.DataModel.Args.BucketExistsArgs().WithBucket(appConfig.MinioBucket);
+    var bucketExists = await minioClient.BucketExistsAsync(bucketExistsArgs).ConfigureAwait(false);
+    
+    if (!bucketExists)
+    {
+        Console.WriteLine($"Bucket '{appConfig.MinioBucket}' does not exist. Creating it...");
+        var makeBucketArgs = new Minio.DataModel.Args.MakeBucketArgs().WithBucket(appConfig.MinioBucket);
+        await minioClient.MakeBucketAsync(makeBucketArgs).ConfigureAwait(false);
+        Console.WriteLine($"Bucket '{appConfig.MinioBucket}' created successfully.");
+    }
+    else
+    {
+        Console.WriteLine($"Bucket '{appConfig.MinioBucket}' exists and is accessible.");
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"WARNING: Could not verify/create MinIO bucket: {ex.Message}");
+    Console.WriteLine("The application will continue, but file operations may fail.");
+}
+
 // Configure the HTTP request pipeline
 if (!app.Environment.IsDevelopment())
 {

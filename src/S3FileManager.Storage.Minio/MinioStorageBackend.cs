@@ -23,34 +23,42 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
 
     public async Task<IReadOnlyList<FileItem>> ListAsync(string path, UserContext user, CancellationToken cancellationToken = default)
     {
-        var prefix = NormalizePrefix(path);
-        var items = new List<FileItem>();
-
-        var listArgs = new ListObjectsArgs()
-            .WithBucket(_bucketName)
-            .WithPrefix(prefix)
-            .WithRecursive(false);
-
-        var results = _client.ListObjectsEnumAsync(listArgs, cancellationToken: cancellationToken);
-
-        await foreach (var entry in results.ConfigureAwait(false))
+        try
         {
-            if (entry.IsDir)
-            {
-                // common prefix (virtual folder)
-                items.Add(MapPrefixToDirectory(entry.Key));
-            }
-            else
-            {
-                items.Add(MapObjectToFile(entry));
-            }
-        }
+            var prefix = NormalizePrefix(path);
+            var items = new List<FileItem>();
 
-        // remove duplicates in case both dir listing and object listing return same virtual folder
-        return items
-            .GroupBy(i => i.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(g => g.First())
-            .ToList();
+            var listArgs = new ListObjectsArgs()
+                .WithBucket(_bucketName)
+                .WithPrefix(prefix)
+                .WithRecursive(false);
+
+            var results = _client.ListObjectsEnumAsync(listArgs, cancellationToken: cancellationToken);
+
+            await foreach (var entry in results.ConfigureAwait(false))
+            {
+                if (entry.IsDir)
+                {
+                    // common prefix (virtual folder)
+                    items.Add(MapPrefixToDirectory(entry.Key));
+                }
+                else
+                {
+                    items.Add(MapObjectToFile(entry));
+                }
+            }
+
+            // remove duplicates in case both dir listing and object listing return same virtual folder
+            return items
+                .GroupBy(i => i.Path, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error listing objects in bucket '{_bucketName}' with path '{path}': {ex.Message}");
+            throw new InvalidOperationException($"Failed to list objects in bucket '{_bucketName}': {ex.Message}", ex);
+        }
     }
 
     public async Task UploadAsync(string path, Stream content, UserContext user, CancellationToken cancellationToken = default)

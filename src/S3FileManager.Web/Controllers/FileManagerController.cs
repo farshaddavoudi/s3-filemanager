@@ -36,11 +36,13 @@ public class FileManagerController : ControllerBase
     [HttpPost("operations")]
     public async Task<IActionResult> Operations([FromForm] FileManagerRequest request, CancellationToken cancellationToken)
     {
-        var user = BuildUserContext();
-        var path = NormalizePath(request.Path);
-        var perms = await _accessPolicy.GetPermissionsAsync(user, path, cancellationToken);
+        try
+        {
+            var user = BuildUserContext();
+            var path = NormalizePath(request.Path);
+            var perms = await _accessPolicy.GetPermissionsAsync(user, path, cancellationToken);
 
-        switch (request.Action?.ToLowerInvariant())
+            switch (request.Action?.ToLowerInvariant())
         {
             case "read":
                 if (!perms.CanRead) return Forbid();
@@ -88,6 +90,11 @@ public class FileManagerController : ControllerBase
 
             default:
                 return BadRequest(new { error = "Unsupported action" });
+        }
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { error = ex.Message, details = ex.ToString() });
         }
     }
 
