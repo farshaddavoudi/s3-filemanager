@@ -52,6 +52,9 @@ builder.Services.AddSingleton<IMinioClient>(_ =>
         client = client.WithEndpoint(appConfig.MinioEndpoint);
     }
 
+    // Set a default region to prevent null reference issues
+    client = client.WithRegion("us-east-1");
+
     return client.Build();
 });
 
@@ -69,7 +72,7 @@ try
     var minioClient = app.Services.GetRequiredService<IMinioClient>();
     var bucketExistsArgs = new Minio.DataModel.Args.BucketExistsArgs().WithBucket(appConfig.MinioBucket);
     var bucketExists = await minioClient.BucketExistsAsync(bucketExistsArgs).ConfigureAwait(false);
-    
+
     if (!bucketExists)
     {
         Console.WriteLine($"Bucket '{appConfig.MinioBucket}' does not exist. Creating it...");
