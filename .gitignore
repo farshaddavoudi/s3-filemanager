@@ -420,3 +420,6 @@ FodyWeavers.xsd
 /tmp.txt
 /docs/prompts
 /.local
+# local tooling artefacts
+runlog.txt
+ilspy-out/

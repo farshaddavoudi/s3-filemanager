@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using S3FileManager.Core;
+using Syncfusion.Blazor.FileManager;
 using System.Text.Json;
 
 namespace S3FileManager.Web.Controllers;
@@ -166,35 +167,55 @@ public class FileManagerController : ControllerBase
         return string.IsNullOrEmpty(result) ? "/" : result;
     }
 
-    private static object MapToFileManagerItem(FileItem item) => new
+    private static FileManagerDirectoryContent MapToFileManagerItem(FileItem item)
     {
-        name = !string.IsNullOrWhiteSpace(item.Name) ? item.Name : "Unknown",
-        isFile = !item.IsDirectory,
-        size = item.Size ?? 0,
-        dateModified = item.LastModified ?? DateTimeOffset.UtcNow,
-        dateCreated = item.LastModified ?? DateTimeOffset.UtcNow,
-        hasChild = false,
-        type = item.IsDirectory ? "AirParsiana" : (!string.IsNullOrWhiteSpace(item.Name) ? Path.GetExtension(item.Name) : ""),
-        filterPath = !string.IsNullOrWhiteSpace(item.Path) ? GetDirectoryPath(item.Path) : "/",
-        path = !string.IsNullOrWhiteSpace(item.Path) ? item.Path : "/"
-    };
+        // Ensure path is never null or empty
+        var itemPath = string.IsNullOrWhiteSpace(item.Path) ? "/" : item.Path;
+        var itemName = !string.IsNullOrWhiteSpace(item.Name) ? item.Name : "Unknown";
 
-    private static object MapToCwd(string path, IReadOnlyList<FileItem> items)
+        // Calculate filterPath - for root level items, use "/"
+        var filterPath = GetDirectoryPath(itemPath);
+        var id = itemPath;
+
+        return new FileManagerDirectoryContent
+        {
+            Name = itemName,
+            IsFile = !item.IsDirectory,
+            Size = item.Size ?? 0,
+            DateModified = (item.LastModified ?? DateTimeOffset.UtcNow).UtcDateTime,
+            DateCreated = (item.LastModified ?? DateTimeOffset.UtcNow).UtcDateTime,
+            HasChild = item.IsDirectory,
+            Type = item.IsDirectory ? "Directory" : (!string.IsNullOrWhiteSpace(item.Name) ? Path.GetExtension(item.Name) : ""),
+            FilterPath = filterPath,
+            Path = itemPath,
+            Id = id,
+            ParentId = filterPath
+        };
+    }
+
+    private static FileManagerDirectoryContent MapToCwd(string path, IReadOnlyList<FileItem> items)
     {
         var normalized = NormalizePath(path);
         var name = GetNameFromPath(normalized);
         var hasChild = items.Any(i => i.IsDirectory);
-        return new
+
+        // Get the parent path for filterPath
+        var filterPath = GetDirectoryPath(normalized);
+        var id = normalized;
+
+        return new FileManagerDirectoryContent
         {
-            name = string.IsNullOrWhiteSpace(name) ? "/" : name,
-            size = 0,
-            dateModified = DateTimeOffset.UtcNow,
-            dateCreated = DateTimeOffset.UtcNow,
-            hasChild,
-            isFile = false,
-            type = "Folder",
-            filterPath = GetDirectoryPath(normalized),
-            path = normalized
+            Name = string.IsNullOrWhiteSpace(name) || name == "/" ? "AirParsiana" : name,
+            Size = 0,
+            DateModified = DateTime.UtcNow,
+            DateCreated = DateTime.UtcNow,
+            HasChild = hasChild,
+            IsFile = false,
+            Type = "Folder",
+            FilterPath = filterPath == "/" ? string.Empty : filterPath,
+            Path = normalized,
+            Id = id,
+            ParentId = string.IsNullOrEmpty(filterPath) ? null : GetDirectoryPath(filterPath)
         };
     }
 
