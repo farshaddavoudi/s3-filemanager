@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using S3FileManager.Core;
+using S3FileManager.Web.Configuration;
 using Syncfusion.Blazor.FileManager;
 using System.Text.Json;
 
@@ -12,15 +13,20 @@ public class FileManagerController : ControllerBase
     private readonly IObjectStorageBackend _storage;
     private readonly IAccessPolicyProvider _accessPolicy;
     private readonly IAuditLogProvider _audit;
+    private readonly string _rootAliasName;
 
     public FileManagerController(
         IObjectStorageBackend storage,
         IAccessPolicyProvider accessPolicy,
-        IAuditLogProvider audit)
+        IAuditLogProvider audit,
+        AppConfig appConfig)
     {
         _storage = storage;
         _accessPolicy = accessPolicy;
         _audit = audit;
+        _rootAliasName = string.IsNullOrWhiteSpace(appConfig.FileManagerRootAlias)
+            ? "File Storage"
+            : appConfig.FileManagerRootAlias;
     }
 
     private UserContext BuildUserContext()
@@ -49,7 +55,7 @@ public class FileManagerController : ControllerBase
                     if (!perms.CanRead) return Forbid();
                     var items = await _storage.ListAsync(path, user, cancellationToken);
                     await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "List", path), cancellationToken);
-                    var cwd = MapToCwd(path, items);
+                    var cwd = MapToCwd(path, items, _rootAliasName);
                     return Ok(new { cwd, files = items.Select(MapToFileManagerItem).ToList() });
 
                 case "create":
@@ -193,7 +199,7 @@ public class FileManagerController : ControllerBase
         };
     }
 
-    private static FileManagerDirectoryContent MapToCwd(string path, IReadOnlyList<FileItem> items)
+    private static FileManagerDirectoryContent MapToCwd(string path, IReadOnlyList<FileItem> items, string rootAliasName)
     {
         var normalized = NormalizePath(path);
         var name = GetNameFromPath(normalized);
@@ -205,7 +211,7 @@ public class FileManagerController : ControllerBase
 
         return new FileManagerDirectoryContent
         {
-            Name = string.IsNullOrWhiteSpace(name) || name == "/" ? "AirParsiana" : name,
+            Name = string.IsNullOrWhiteSpace(name) || name == "/" ? rootAliasName : name,
             Size = 0,
             DateModified = DateTime.UtcNow,
             DateCreated = DateTime.UtcNow,

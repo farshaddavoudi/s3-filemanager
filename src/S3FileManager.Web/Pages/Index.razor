@@ -1,10 +1,12 @@
 @page "/"
 
+@inject S3FileManager.Web.Configuration.AppConfig AppConfig
+
 <PageTitle>S3 File Manager</PageTitle>
 
 <div class="container py-3">
     <h1 class="h4 mb-3">S3 File Manager</h1>
-    <SfFileManager TValue="FileManagerDirectoryContent" Height="600px" RootAliasName="AirParsiana" Path="/">
+    <SfFileManager TValue="FileManagerDirectoryContent" Height="600px" RootAliasName="@AppConfig.FileManagerRootAlias" Path="/">
         <FileManagerAjaxSettings Url="/api/files/operations"
                                  UploadUrl="/api/files/upload"
                                  DownloadUrl="/api/files/download" />

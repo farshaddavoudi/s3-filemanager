@@ -7,6 +7,7 @@ public sealed class AppConfig
     public string MinioAccessKey { get; init; } = string.Empty;
     public string MinioSecretKey { get; init; } = string.Empty;
     public string MinioBucket { get; init; } = string.Empty;
+    public string FileManagerRootAlias { get; init; } = "File Storage";
 
     public static AppConfig FromEnvironment()
     {
@@ -17,6 +18,9 @@ public sealed class AppConfig
             MinioAccessKey = GetEnv("MINIO_ACCESSKEY"),
             MinioSecretKey = GetEnv("MINIO_SECRETKEY"),
             MinioBucket = GetEnv("MINIO_BUCKET"),
+            FileManagerRootAlias = string.IsNullOrWhiteSpace(GetEnv("FILEMANAGER_ROOT_ALIAS"))
+                ? "File Storage"
+                : GetEnv("FILEMANAGER_ROOT_ALIAS"),
         };
 
         cfg.Validate();
