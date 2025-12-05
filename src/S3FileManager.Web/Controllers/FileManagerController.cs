@@ -221,6 +221,31 @@ public class FileManagerController : ControllerBase
             .GroupBy(f => CanonicalKey(f.Path), StringComparer.OrdinalIgnoreCase)
             .Select(g => g.First())
             .ToList();
+
+        // Log what we are sending back to help trace UI errors (e.g., thumbnail/null refs).
+        try
+        {
+            var payload = new
+            {
+                cwd,
+                files = files.Select(f => new
+                {
+                    f.Name,
+                    f.Path,
+                    f.FilterPath,
+                    f.Id,
+                    f.ParentId,
+                    f.IsFile,
+                    f.Type
+                })
+            };
+            Console.WriteLine($"[BuildListingResult] path='{normalizedPath}' payload={JsonSerializer.Serialize(payload)}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BuildListingResult] Failed to log payload: {ex.Message}");
+        }
+
         return Ok(new { cwd, files });
     }
 
@@ -249,6 +274,33 @@ public class FileManagerController : ControllerBase
         }
 
         return await BuildListingResultAsync(normalizedPath, user, cancellationToken);
+    }
+
+    [HttpGet("image")]
+    public async Task<IActionResult> GetImage([FromQuery] string path, CancellationToken cancellationToken)
+    {
+        var user = BuildUserContext();
+        var normalizedPath = NormalizePath(path);
+        Console.WriteLine($"[GetImage] Request path='{path}', normalized='{normalizedPath}'");
+
+        var perms = await _accessPolicy.GetPermissionsAsync(user, normalizedPath, cancellationToken);
+        if (!perms.CanRead) return Forbid();
+
+        var stream = await _storage.OpenReadAsync(normalizedPath, user, cancellationToken);
+        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "GetImage", normalizedPath), cancellationToken);
+
+        var fileName = Path.GetFileName(normalizedPath.TrimEnd('/'));
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = "image";
+        }
+
+        if (!ContentTypeProvider.TryGetContentType(fileName, out var contentType))
+        {
+            contentType = "application/octet-stream";
+        }
+
+        return File(stream, contentType, enableRangeProcessing: true);
     }
 
     [HttpPost("download")]
@@ -321,7 +373,19 @@ public class FileManagerController : ControllerBase
 
         // Calculate filterPath - for root level items, use "/"
         var parentCanonical = GetDirectoryPath(canonical);
-        var parentId = parentCanonical == "/" ? "/" : EnsureFolder(parentCanonical);
+        var parentId = string.IsNullOrWhiteSpace(parentCanonical) || parentCanonical == "/"
+            ? "/"
+            : EnsureFolder(parentCanonical);
+        var filterPath = parentId; // Syncfusion expects filterPath to be parent path with trailing slash (or "/")
+        var permission = new AccessPermission
+        {
+            Read = true,
+            Write = true,
+            Upload = true,
+            Download = true,
+            Copy = true,
+            WriteContents = true
+        };
 
         return new FileManagerDirectoryContent
         {
@@ -332,10 +396,12 @@ public class FileManagerController : ControllerBase
             DateCreated = (item.LastModified ?? DateTimeOffset.UtcNow).UtcDateTime,
             HasChild = item.IsDirectory,
             Type = item.IsDirectory ? "Directory" : (!string.IsNullOrWhiteSpace(item.Name) ? Path.GetExtension(item.Name) : ""),
-            FilterPath = parentId,
+            FilterPath = filterPath,
+            FilterId = filterPath,
             Path = pathForUi,
             Id = pathForUi,
-            ParentId = parentId
+            ParentId = parentId,
+            Permission = permission
         };
     }
 
@@ -344,12 +410,23 @@ public class FileManagerController : ControllerBase
         var canonical = CanonicalPath(path);
         var pathForUi = canonical == "/" ? "/" : EnsureFolder(canonical);
         var name = Decode(GetNameFromPath(canonical));
-        var hasChild = items.Any(i => i.IsDirectory);
+        var hasChild = items.Any(); // mark true if any child (files or folders)
 
         // Get the parent path for filterPath
         var filterPathCanonical = GetDirectoryPath(canonical);
-        var filterPathUi = filterPathCanonical == "/" ? string.Empty : EnsureFolder(filterPathCanonical);
-        var id = pathForUi;
+        var filterPathUi = string.IsNullOrWhiteSpace(filterPathCanonical) || filterPathCanonical == "/"
+            ? "/"
+            : EnsureFolder(filterPathCanonical);
+        var id = pathForUi == "/" ? "/" : pathForUi;
+        var permission = new AccessPermission
+        {
+            Read = true,
+            Write = true,
+            Upload = true,
+            Download = true,
+            Copy = true,
+            WriteContents = true
+        };
 
         return new FileManagerDirectoryContent
         {
@@ -361,9 +438,11 @@ public class FileManagerController : ControllerBase
             IsFile = false,
             Type = "Folder",
             FilterPath = filterPathUi,
+            FilterId = filterPathUi,
             Path = pathForUi,
             Id = id,
-            ParentId = string.IsNullOrEmpty(filterPathUi) ? null : GetDirectoryPath(filterPathUi)
+            ParentId = filterPathUi,
+            Permission = permission
         };
     }
 
@@ -374,6 +453,7 @@ public class FileManagerController : ControllerBase
         var last = normalized.LastIndexOf('/');
         return last >= 0 ? normalized[(last + 1)..] : normalized;
     }
+
 
     private static string Decode(string value) => Uri.UnescapeDataString(value.Replace("+", " "));
 
