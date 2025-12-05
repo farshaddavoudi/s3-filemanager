@@ -277,25 +277,55 @@ public class FileManagerController : ControllerBase
     }
 
     [HttpGet("image")]
-    public async Task<IActionResult> GetImage([FromQuery] string path, CancellationToken cancellationToken)
+    public Task<IActionResult> GetImage([FromQuery] string? path, [FromQuery] string? id, [FromQuery] string? name, CancellationToken cancellationToken)
+        => GetImageInternal(path, id, name, cancellationToken, "GET");
+
+    [HttpPost("image")]
+    public Task<IActionResult> GetImagePost([FromBody] Syncfusion.Blazor.FileManager.FileManagerDirectoryContent payload, CancellationToken cancellationToken)
+        => GetImageInternal(payload.Path, payload.Id, payload.Name, cancellationToken, "POST");
+
+    private async Task<IActionResult> GetImageInternal(string? path, string? id, string? name, CancellationToken cancellationToken, string verb)
     {
         var user = BuildUserContext();
-        var normalizedPath = NormalizePath(path);
-        Console.WriteLine($"[GetImage] Request path='{path}', normalized='{normalizedPath}'");
 
-        var perms = await _accessPolicy.GetPermissionsAsync(user, normalizedPath, cancellationToken);
-        if (!perms.CanRead) return Forbid();
+        var basePath = NormalizePath(path);
+        var primary = FirstNonEmpty(id, name);
 
-        var stream = await _storage.OpenReadAsync(normalizedPath, user, cancellationToken);
-        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "GetImage", normalizedPath), cancellationToken);
-
-        var fileName = Path.GetFileName(normalizedPath.TrimEnd('/'));
-        if (string.IsNullOrWhiteSpace(fileName))
+        // Syncfusion sends id as a fully qualified path (e.g., "/folder/file.png") while also passing path="/folder/".
+        // Prefer the absolute id when present; otherwise combine with base path.
+        string resolvedPath;
+        if (!string.IsNullOrWhiteSpace(primary))
         {
-            fileName = "image";
+            var candidate = CanonicalPath(primary);
+            resolvedPath = candidate.StartsWith(basePath, StringComparison.OrdinalIgnoreCase)
+                ? candidate
+                : CanonicalPath(Combine(basePath, primary));
+        }
+        else
+        {
+            resolvedPath = basePath;
         }
 
-        if (!ContentTypeProvider.TryGetContentType(fileName, out var contentType))
+        Console.WriteLine($"[GetImage] verb={verb} path='{path}' id='{id}' name='{name}' => basePath='{basePath}' resolvedPath='{resolvedPath}'");
+
+        if (string.IsNullOrWhiteSpace(resolvedPath) || resolvedPath == "/")
+        {
+            return BadRequest(new { error = "Invalid image path" });
+        }
+
+        var perms = await _accessPolicy.GetPermissionsAsync(user, resolvedPath, cancellationToken);
+        if (!perms.CanRead) return Forbid();
+
+        var stream = await _storage.OpenReadAsync(resolvedPath, user, cancellationToken);
+        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "GetImage", resolvedPath), cancellationToken);
+
+        var fileNameForCt = Path.GetFileName(resolvedPath.TrimEnd('/'));
+        if (string.IsNullOrWhiteSpace(fileNameForCt))
+        {
+            fileNameForCt = "image";
+        }
+
+        if (!ContentTypeProvider.TryGetContentType(fileNameForCt, out var contentType))
         {
             contentType = "application/octet-stream";
         }
@@ -387,6 +417,7 @@ public class FileManagerController : ControllerBase
             WriteContents = true
         };
 
+        // Syncfusion builds thumbnail links using FilterId; keep it in sync with FilterPath/ParentId.
         return new FileManagerDirectoryContent
         {
             Name = itemName,
