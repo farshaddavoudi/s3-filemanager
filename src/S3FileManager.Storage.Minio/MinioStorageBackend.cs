@@ -63,27 +63,169 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
 
     public async Task UploadAsync(string path, Stream content, UserContext user, CancellationToken cancellationToken = default)
     {
-        // TODO: implement PutObject / UploadObjectAsync using MinIO SDK.
-        await Task.CompletedTask;
+        if (path is null) throw new ArgumentNullException(nameof(path));
+
+        try
+        {
+            var isDirectoryPlaceholder = path.EndsWith("/", StringComparison.Ordinal);
+            var objectKey = NormalizeObjectKey(path, preserveTrailingSlash: isDirectoryPlaceholder);
+
+            var (uploadStream, length, disposeAfter) = await EnsureSeekableStreamAsync(
+                isDirectoryPlaceholder ? Stream.Null : content,
+                cancellationToken);
+
+            var putArgs = new PutObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(objectKey)
+                .WithStreamData(uploadStream)
+                .WithObjectSize(length)
+                .WithContentType("application/octet-stream");
+
+            await _client.PutObjectAsync(putArgs, cancellationToken).ConfigureAwait(false);
+
+            if (disposeAfter)
+            {
+                await uploadStream.DisposeAsync().ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to upload object '{path}' to bucket '{_bucketName}'.", ex);
+        }
     }
 
     public async Task DeleteAsync(string path, UserContext user, CancellationToken cancellationToken = default)
     {
-        // TODO: implement RemoveObject / RemoveObjectsAsync.
-        await Task.CompletedTask;
+        if (path is null) throw new ArgumentNullException(nameof(path));
+
+        try
+        {
+            var isDirectory = IsDirectoryPath(path);
+
+            if (!isDirectory)
+            {
+                var objectKey = NormalizeObjectKey(path);
+                var args = new RemoveObjectArgs()
+                    .WithBucket(_bucketName)
+                    .WithObject(objectKey);
+
+                await _client.RemoveObjectAsync(args, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var prefix = NormalizePrefix(path);
+            var keys = await CollectKeysForPrefixAsync(prefix, cancellationToken).ConfigureAwait(false);
+            if (keys.Count == 0) return;
+
+            // Prefer batch deletion when there are multiple objects
+            if (keys.Count > 1)
+            {
+                var removeArgs = new RemoveObjectsArgs()
+                    .WithBucket(_bucketName)
+                    .WithObjects(keys);
+
+                var errors = await _client.RemoveObjectsAsync(removeArgs, cancellationToken).ConfigureAwait(false);
+                if (errors?.Count > 0)
+                {
+                    var first = errors[0];
+                    throw new InvalidOperationException($"Failed to delete '{first.Key}': {first.Message}");
+                }
+            }
+            else
+            {
+                var args = new RemoveObjectArgs()
+                    .WithBucket(_bucketName)
+                    .WithObject(keys[0]);
+
+                await _client.RemoveObjectAsync(args, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to delete '{path}' in bucket '{_bucketName}'.", ex);
+        }
     }
 
     public async Task MoveAsync(string fromPath, string toPath, UserContext user, CancellationToken cancellationToken = default)
     {
-        // TODO: implement Copy + Delete pattern for move/rename.
-        await Task.CompletedTask;
+        if (fromPath is null) throw new ArgumentNullException(nameof(fromPath));
+        if (toPath is null) throw new ArgumentNullException(nameof(toPath));
+
+        try
+        {
+            var looksLikeDirectory = IsDirectoryPath(fromPath);
+            var sourcePrefix = looksLikeDirectory ? NormalizePrefix(fromPath) : NormalizeObjectKey(fromPath);
+
+            // If not explicitly a directory, detect by checking if there are objects under the prefix.
+            if (!looksLikeDirectory)
+            {
+                var tentativePrefix = NormalizePrefix(fromPath);
+                looksLikeDirectory = await PrefixHasObjectsAsync(tentativePrefix, cancellationToken).ConfigureAwait(false);
+                if (looksLikeDirectory)
+                    sourcePrefix = tentativePrefix;
+            }
+
+            if (!looksLikeDirectory)
+            {
+                var destinationKey = NormalizeObjectKey(toPath);
+                await CopyObjectAsync(sourcePrefix, destinationKey, cancellationToken).ConfigureAwait(false);
+                await DeleteAsync(fromPath, user, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            var destinationPrefix = NormalizePrefix(EnsureTrailingSlash(toPath));
+            var keys = await CollectKeysForPrefixAsync(sourcePrefix, cancellationToken).ConfigureAwait(false);
+
+            foreach (var key in keys)
+            {
+                var relative = key[sourcePrefix.Length..];
+                var destinationKey = string.Concat(destinationPrefix, relative);
+                await CopyObjectAsync(key, destinationKey, cancellationToken).ConfigureAwait(false);
+            }
+
+            // remove source objects
+            if (keys.Count > 0)
+            {
+                var removeArgs = new RemoveObjectsArgs()
+                    .WithBucket(_bucketName)
+                    .WithObjects(keys);
+
+                var errors = await _client.RemoveObjectsAsync(removeArgs, cancellationToken).ConfigureAwait(false);
+                if (errors?.Count > 0)
+                {
+                    var first = errors[0];
+                    throw new InvalidOperationException($"Failed to delete '{first.Key}' after move: {first.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to move '{fromPath}' to '{toPath}' in bucket '{_bucketName}'.", ex);
+        }
     }
 
     public async Task<Stream> OpenReadAsync(string path, UserContext user, CancellationToken cancellationToken = default)
     {
-        // TODO: implement GetObject to a stream.
-        // Returning an empty MemoryStream for now.
-        return new MemoryStream();
+        if (path is null) throw new ArgumentNullException(nameof(path));
+
+        try
+        {
+            var key = NormalizeObjectKey(path);
+            var memoryStream = new MemoryStream();
+
+            var getArgs = new GetObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(key)
+                .WithCallbackStream(stream => stream.CopyTo(memoryStream));
+
+            await _client.GetObjectAsync(getArgs, cancellationToken).ConfigureAwait(false);
+            memoryStream.Position = 0;
+            return memoryStream;
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException($"Failed to open '{path}' for read from bucket '{_bucketName}'.", ex);
+        }
     }
 
     private static string NormalizePrefix(string? path)
@@ -144,5 +286,83 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
             cleaned += "/";
 
         return cleaned;
+    }
+
+    private static string NormalizeObjectKey(string path, bool preserveTrailingSlash = false)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return string.Empty;
+
+        var cleaned = path.Replace("\\", "/").TrimStart('/');
+        return preserveTrailingSlash ? cleaned : cleaned.TrimEnd('/');
+    }
+
+    private static string EnsureTrailingSlash(string path)
+    {
+        return path.EndsWith("/", StringComparison.Ordinal) ? path : path + "/";
+    }
+
+    private static bool IsDirectoryPath(string path) => path.EndsWith("/", StringComparison.Ordinal);
+
+    private static async Task<(Stream Stream, long Length, bool DisposeAfter)> EnsureSeekableStreamAsync(
+        Stream source,
+        CancellationToken cancellationToken)
+    {
+        if (source.CanSeek)
+        {
+            return (source, source.Length - source.Position, false);
+        }
+
+        var buffer = new MemoryStream();
+        await source.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+        buffer.Position = 0;
+        return (buffer, buffer.Length, true);
+    }
+
+    private async Task<bool> PrefixHasObjectsAsync(string prefix, CancellationToken cancellationToken)
+    {
+        var listArgs = new ListObjectsArgs()
+            .WithBucket(_bucketName)
+            .WithPrefix(prefix)
+            .WithRecursive(true);
+
+        var results = _client.ListObjectsEnumAsync(listArgs, cancellationToken: cancellationToken);
+        await foreach (var _ in results.ConfigureAwait(false))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<List<string>> CollectKeysForPrefixAsync(string prefix, CancellationToken cancellationToken)
+    {
+        var keys = new List<string>();
+        var listArgs = new ListObjectsArgs()
+            .WithBucket(_bucketName)
+            .WithPrefix(prefix)
+            .WithRecursive(true);
+
+        var results = _client.ListObjectsEnumAsync(listArgs, cancellationToken: cancellationToken);
+        await foreach (var entry in results.ConfigureAwait(false))
+        {
+            if (entry.IsDir) continue;
+            keys.Add(entry.Key);
+        }
+
+        return keys;
+    }
+
+    private async Task CopyObjectAsync(string sourceKey, string destinationKey, CancellationToken cancellationToken)
+    {
+        var copySourceArgs = new CopySourceObjectArgs()
+            .WithBucket(_bucketName)
+            .WithObject(sourceKey);
+
+        var copyArgs = new CopyObjectArgs()
+            .WithBucket(_bucketName)
+            .WithObject(destinationKey)
+            .WithCopyObjectSource(copySourceArgs);
+
+        await _client.CopyObjectAsync(copyArgs, cancellationToken).ConfigureAwait(false);
     }
 }

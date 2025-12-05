@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.StaticFiles;
 using S3FileManager.Core;
 using S3FileManager.Web.Configuration;
 using Syncfusion.Blazor.FileManager;
@@ -14,6 +15,7 @@ public class FileManagerController : ControllerBase
     private readonly IAccessPolicyProvider _accessPolicy;
     private readonly IAuditLogProvider _audit;
     private readonly string _rootAliasName;
+    private static readonly FileExtensionContentTypeProvider ContentTypeProvider = new();
 
     public FileManagerController(
         IObjectStorageBackend storage,
@@ -43,66 +45,165 @@ public class FileManagerController : ControllerBase
     [HttpPost("operations")]
     public async Task<IActionResult> Operations([FromBody] FileManagerRequest request, CancellationToken cancellationToken)
     {
+        var user = BuildUserContext();
+        var action = request.Action?.ToLowerInvariant();
+        var currentPath = NormalizePath(request.Path);
+
         try
         {
-            var user = BuildUserContext();
-            var path = NormalizePath(request.Path);
-            var perms = await _accessPolicy.GetPermissionsAsync(user, path, cancellationToken);
-
-            switch (request.Action?.ToLowerInvariant())
+            return action switch
             {
-                case "read":
-                    if (!perms.CanRead) return Forbid();
-                    var items = await _storage.ListAsync(path, user, cancellationToken);
-                    await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "List", path), cancellationToken);
-                    var cwd = MapToCwd(path, items, _rootAliasName);
-                    return Ok(new { cwd, files = items.Select(MapToFileManagerItem).ToList() });
-
-                case "create":
-                    if (!perms.CanWrite && !perms.CanUpload) return Forbid();
-                    var newFolderName = request.NewName ?? "New Folder";
-                    var folderPath = EnsureFolder(Combine(path, newFolderName));
-                    await _storage.UploadAsync(folderPath, Stream.Null, user, cancellationToken);
-                    await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "CreateFolder", folderPath), cancellationToken);
-                    return Ok(new { result = "success" });
-
-                case "delete":
-                    if (!perms.CanDelete) return Forbid();
-                    foreach (var name in request.Names ?? Enumerable.Empty<string>())
-                    {
-                        var deletePath = Combine(path, name);
-                        await _storage.DeleteAsync(deletePath, user, cancellationToken);
-                        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Delete", deletePath), cancellationToken);
-                    }
-                    return Ok(new { result = "success" });
-
-                case "rename":
-                    if (!perms.CanWrite) return Forbid();
-                    var source = Combine(path, request.Names?.FirstOrDefault() ?? string.Empty);
-                    var destination = Combine(GetDirectoryPath(source), request.NewName ?? string.Empty);
-                    await _storage.MoveAsync(source, destination, user, cancellationToken);
-                    await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Rename", $"{source} -> {destination}"), cancellationToken);
-                    return Ok(new { result = "success" });
-
-                case "move":
-                    if (!perms.CanWrite) return Forbid();
-                    foreach (var name in request.Names ?? Enumerable.Empty<string>())
-                    {
-                        var sourcePath = Combine(path, name);
-                        var destPath = Combine(NormalizePath(request.TargetPath), name);
-                        await _storage.MoveAsync(sourcePath, destPath, user, cancellationToken);
-                        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Move", $"{sourcePath} -> {destPath}"), cancellationToken);
-                    }
-                    return Ok(new { result = "success" });
-
-                default:
-                    return BadRequest(new { error = "Unsupported action" });
-            }
+                "read"    => await HandleReadAsync(currentPath, user, cancellationToken),
+                "details" => await HandleDetailsAsync(currentPath, request, user, cancellationToken),
+                "create"  => await HandleCreateAsync(currentPath, request, user, cancellationToken),
+                "delete"  => await HandleDeleteAsync(currentPath, request, user, cancellationToken),
+                "rename"  => await HandleRenameAsync(currentPath, request, user, cancellationToken),
+                "move"    => await HandlePasteAsync(currentPath, request, user, cancellationToken),
+                "paste"   => await HandlePasteAsync(currentPath, request, user, cancellationToken),
+                _ => BadRequest(new { error = "Unsupported action" })
+            };
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = ex.Message, details = ex.ToString() });
+            return StatusCode(500, new { error = "Internal server error", message = ex.Message });
         }
+    }
+
+    private async Task<IActionResult> HandleReadAsync(string path, UserContext user, CancellationToken cancellationToken)
+    {
+        var perms = await _accessPolicy.GetPermissionsAsync(user, path, cancellationToken);
+        if (!perms.CanRead) return Forbid();
+
+        var items = await _storage.ListAsync(path, user, cancellationToken);
+        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "List", path), cancellationToken);
+
+        return BuildListingResult(path, items);
+    }
+
+    private async Task<IActionResult> HandleDetailsAsync(string path, FileManagerRequest request, UserContext user, CancellationToken cancellationToken)
+    {
+        var perms = await _accessPolicy.GetPermissionsAsync(user, path, cancellationToken);
+        if (!perms.CanRead) return Forbid();
+
+        var items = await _storage.ListAsync(path, user, cancellationToken);
+        var requestedNames = (request.Names ?? new List<string>()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedItems = requestedNames.Count == 0
+            ? items
+            : items.Where(i => requestedNames.Contains(i.Name)).ToList();
+
+        var cwd = MapToCwd(path, items, _rootAliasName);
+        var details = selectedItems.Select(MapToFileManagerItem).ToList();
+        return Ok(new { cwd, details });
+    }
+
+    private async Task<IActionResult> HandleCreateAsync(string path, FileManagerRequest request, UserContext user, CancellationToken cancellationToken)
+    {
+        var perms = await _accessPolicy.GetPermissionsAsync(user, path, cancellationToken);
+        if (!perms.CanWrite && !perms.CanUpload) return Forbid();
+
+        var newFolderName = FirstNonEmpty(request.NewName, request.Name, "New Folder");
+        var folderPath = EnsureFolder(Combine(path, newFolderName));
+
+        await _storage.UploadAsync(folderPath, Stream.Null, user, cancellationToken);
+        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "CreateFolder", folderPath), cancellationToken);
+
+        return await BuildListingResultAsync(path, user, cancellationToken);
+    }
+
+    private async Task<IActionResult> HandleDeleteAsync(string path, FileManagerRequest request, UserContext user, CancellationToken cancellationToken)
+    {
+        var names = request.Names ?? new List<string>();
+        if (names.Count == 0) return BadRequest(new { error = "No items to delete" });
+
+        var items = await _storage.ListAsync(path, user, cancellationToken);
+        var lookup = items.ToDictionary(i => i.Name, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in names)
+        {
+            var deletePath = Combine(path, name);
+            var isDirectory = lookup.TryGetValue(name, out var item) && item.IsDirectory;
+            if (isDirectory) deletePath = EnsureFolder(deletePath);
+
+            var perms = await _accessPolicy.GetPermissionsAsync(user, deletePath, cancellationToken);
+            if (!perms.CanDelete) return Forbid();
+
+            await _storage.DeleteAsync(deletePath, user, cancellationToken);
+            await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Delete", deletePath), cancellationToken);
+        }
+
+        return await BuildListingResultAsync(path, user, cancellationToken);
+    }
+
+    private async Task<IActionResult> HandleRenameAsync(string path, FileManagerRequest request, UserContext user, CancellationToken cancellationToken)
+    {
+        var name = request.Names?.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(name)) return BadRequest(new { error = "Missing name for rename" });
+        var newName = FirstNonEmpty(request.NewName, request.Name, request.TargetPath);
+        if (string.IsNullOrWhiteSpace(newName)) return BadRequest(new { error = "Missing new name" });
+
+        var items = await _storage.ListAsync(path, user, cancellationToken);
+        var isDirectory = items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase))?.IsDirectory == true;
+
+        var source = Combine(path, name);
+        if (isDirectory) source = EnsureFolder(source);
+        var destination = Combine(GetDirectoryPath(source), newName!);
+        if (isDirectory) destination = EnsureFolder(destination);
+
+        var sourcePerms = await _accessPolicy.GetPermissionsAsync(user, source, cancellationToken);
+        var destPerms = await _accessPolicy.GetPermissionsAsync(user, destination, cancellationToken);
+        if (!sourcePerms.CanWrite || !destPerms.CanWrite || !sourcePerms.CanDelete) return Forbid();
+
+        await _storage.MoveAsync(source, destination, user, cancellationToken);
+        await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Rename", $"{source} -> {destination}"), cancellationToken);
+
+        var refreshPath = GetDirectoryPath(destination);
+        return await BuildListingResultAsync(refreshPath, user, cancellationToken);
+    }
+
+    private async Task<IActionResult> HandlePasteAsync(string path, FileManagerRequest request, UserContext user, CancellationToken cancellationToken)
+    {
+        var names = request.Names ?? new List<string>();
+        if (names.Count == 0) return BadRequest(new { error = "No items to move" });
+
+        var targetPath = NormalizePath(string.IsNullOrWhiteSpace(request.TargetPath) ? path : request.TargetPath!);
+        var items = await _storage.ListAsync(path, user, cancellationToken);
+        var lookup = items.ToDictionary(i => i.Name, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in names)
+        {
+            var sourcePath = Combine(path, name);
+            var destPath = Combine(targetPath, name);
+            var isDirectory = lookup.TryGetValue(name, out var item) && item.IsDirectory;
+            if (isDirectory)
+            {
+                sourcePath = EnsureFolder(sourcePath);
+                destPath = EnsureFolder(destPath);
+            }
+
+            var sourcePerms = await _accessPolicy.GetPermissionsAsync(user, sourcePath, cancellationToken);
+            var destPerms = await _accessPolicy.GetPermissionsAsync(user, destPath, cancellationToken);
+            if (!sourcePerms.CanDelete || !(destPerms.CanWrite || destPerms.CanUpload)) return Forbid();
+
+            await _storage.MoveAsync(sourcePath, destPath, user, cancellationToken);
+            await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Move", $"{sourcePath} -> {destPath}"), cancellationToken);
+        }
+
+        return await BuildListingResultAsync(targetPath, user, cancellationToken);
+    }
+
+    private IActionResult BuildListingResult(string path, IReadOnlyList<FileItem> items)
+    {
+        var normalizedPath = NormalizePath(path);
+        var cwd = MapToCwd(normalizedPath, items, _rootAliasName);
+        var files = items.Select(MapToFileManagerItem).ToList();
+        return Ok(new { cwd, files });
+    }
+
+    private async Task<IActionResult> BuildListingResultAsync(string path, UserContext user, CancellationToken cancellationToken)
+    {
+        var normalizedPath = NormalizePath(path);
+        var items = await _storage.ListAsync(normalizedPath, user, cancellationToken);
+        return BuildListingResult(normalizedPath, items);
     }
 
     [HttpPost("upload")]
@@ -112,7 +213,7 @@ public class FileManagerController : ControllerBase
         var user = BuildUserContext();
         var normalizedPath = NormalizePath(path);
         var perms = await _accessPolicy.GetPermissionsAsync(user, normalizedPath, cancellationToken);
-        if (!perms.CanUpload) return Forbid();
+        if (!perms.CanUpload && !perms.CanWrite) return Forbid();
 
         foreach (var formFile in Request.Form.Files)
         {
@@ -122,7 +223,7 @@ public class FileManagerController : ControllerBase
             await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Upload", targetPath), cancellationToken);
         }
 
-        return Ok(new { result = "success" });
+        return await BuildListingResultAsync(normalizedPath, user, cancellationToken);
     }
 
     [HttpPost("download")]
@@ -139,7 +240,17 @@ public class FileManagerController : ControllerBase
         await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Download", normalizedPath), cancellationToken);
 
         var fileName = Path.GetFileName(normalizedPath.TrimEnd('/'));
-        return File(stream, "application/octet-stream", fileName);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = "download";
+        }
+
+        if (!ContentTypeProvider.TryGetContentType(fileName, out var contentType))
+        {
+            contentType = "application/octet-stream";
+        }
+
+        return File(stream, contentType, fileName);
     }
 
     private static string NormalizePath(string? path)
@@ -233,6 +344,18 @@ public class FileManagerController : ControllerBase
         return last >= 0 ? normalized[(last + 1)..] : normalized;
     }
 
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+        return string.Empty;
+    }
+
     private static string? ResolveDownloadPath(string? path, string? downloadInput)
     {
         if (!string.IsNullOrWhiteSpace(path)) return path;
@@ -261,6 +384,7 @@ public class FileManagerController : ControllerBase
         public string? Path { get; set; }
         public string? TargetPath { get; set; }
         public string? NewName { get; set; }
+        public string? Name { get; set; }
         public List<string>? Names { get; set; }
     }
 
