@@ -115,14 +115,32 @@ public class FileManagerController : ControllerBase
         var names = request.Names ?? new List<string>();
         if (names.Count == 0) return BadRequest(new { error = "No items to delete" });
 
+        Console.WriteLine($"[HandleDeleteAsync] Current path: '{path}', Items to delete: {string.Join(", ", names.Select(n => $"'{n}'"))}");
+
         var items = await _storage.ListAsync(path, user, cancellationToken);
+        Console.WriteLine($"[HandleDeleteAsync] Found {items.Count} items in current path");
+        
         var lookup = items.ToDictionary(i => i.Name, StringComparer.OrdinalIgnoreCase);
 
         foreach (var name in names)
         {
-            var deletePath = Combine(path, name);
-            var isDirectory = lookup.TryGetValue(name, out var item) && item.IsDirectory;
-            if (isDirectory) deletePath = EnsureFolder(deletePath);
+            // Syncfusion is expected to send names relative to the current path,
+            // but some browsers/flows send full paths (including trailing slash for folders).
+            var isAbsolute = name.StartsWith("/", StringComparison.Ordinal);
+
+            // Try to detect directory flag either from the current listing or from the incoming name shape.
+            var baseName = GetNameFromPath(name);
+            var isDirectory = (lookup.TryGetValue(baseName, out var item) && item.IsDirectory)
+                              || name.EndsWith("/", StringComparison.Ordinal);
+
+            var deletePath = isAbsolute
+                ? CanonicalPath(name)
+                : Combine(path, name);
+
+            if (isDirectory)
+                deletePath = EnsureFolder(deletePath);
+
+            Console.WriteLine($"[HandleDeleteAsync] Item '{name}': isDirectory={isDirectory}, resolved deletePath='{deletePath}'");
 
             var perms = await _accessPolicy.GetPermissionsAsync(user, deletePath, cancellationToken);
             if (!perms.CanDelete) return Forbid();

@@ -113,10 +113,12 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
         try
         {
             var isDirectory = IsDirectoryPath(path);
+            Console.WriteLine($"[DeleteAsync] Input path: '{path}', IsDirectory: {isDirectory}");
 
             if (!isDirectory)
             {
                 var objectKey = NormalizeObjectKey(path);
+                Console.WriteLine($"[DeleteAsync] Deleting file with key: '{objectKey}'");
                 var args = new RemoveObjectArgs()
                     .WithBucket(_bucketName)
                     .WithObject(objectKey);
@@ -126,12 +128,47 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
             }
 
             var prefix = NormalizePrefix(path);
+            Console.WriteLine($"[DeleteAsync] Normalized prefix: '{prefix}'");
+            
             var keys = await CollectKeysForPrefixAsync(prefix, cancellationToken).ConfigureAwait(false);
-            if (keys.Count == 0) return;
+            Console.WriteLine($"[DeleteAsync] Found {keys.Count} keys under prefix");
+            foreach (var key in keys)
+            {
+                Console.WriteLine($"[DeleteAsync]   - Key: '{key}'");
+            }
+            
+            // For empty folders, we need to explicitly delete the placeholder object (folder/ key)
+            if (keys.Count == 0)
+            {
+                // Try to delete the folder placeholder object itself
+                var folderKey = prefix.TrimEnd('/');
+                if (!string.IsNullOrEmpty(folderKey))
+                {
+                    folderKey += "/";
+                    Console.WriteLine($"[DeleteAsync] No keys found, attempting to delete folder placeholder: '{folderKey}'");
+                    var args = new RemoveObjectArgs()
+                        .WithBucket(_bucketName)
+                        .WithObject(folderKey);
+
+                    try
+                    {
+                        await _client.RemoveObjectAsync(args, cancellationToken).ConfigureAwait(false);
+                        Console.WriteLine($"[DeleteAsync] Successfully deleted folder placeholder: '{folderKey}'");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[DeleteAsync] Failed to delete folder placeholder: {ex.Message}");
+                        // Folder placeholder might not exist, which is okay
+                        // (could be a virtual folder created by nested objects)
+                    }
+                }
+                return;
+            }
 
             // Prefer batch deletion when there are multiple objects
             if (keys.Count > 1)
             {
+                Console.WriteLine($"[DeleteAsync] Batch deleting {keys.Count} objects");
                 var removeArgs = new RemoveObjectsArgs()
                     .WithBucket(_bucketName)
                     .WithObjects(keys);
@@ -145,6 +182,7 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
             }
             else
             {
+                Console.WriteLine($"[DeleteAsync] Deleting single object: '{keys[0]}'");
                 var args = new RemoveObjectArgs()
                     .WithBucket(_bucketName)
                     .WithObject(keys[0]);
@@ -154,6 +192,7 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[DeleteAsync] Exception: {ex.Message}");
             throw new InvalidOperationException($"Failed to delete '{path}' in bucket '{_bucketName}'.", ex);
         }
     }
@@ -357,6 +396,8 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
         var results = _client.ListObjectsEnumAsync(listArgs, cancellationToken: cancellationToken);
         await foreach (var entry in results.ConfigureAwait(false))
         {
+            // Skip virtual directory entries (common prefixes) but include actual objects
+            // Folder placeholder objects (ending with /) are returned as regular objects, not IsDir
             if (entry.IsDir) continue;
             keys.Add(entry.Key);
         }
