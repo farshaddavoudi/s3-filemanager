@@ -256,7 +256,8 @@ public class FileManagerController : ControllerBase
     private static string NormalizePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return "/";
-        var cleaned = path.Replace("\\", "/");
+        var decoded = Decode(path);
+        var cleaned = decoded.Replace("\\", "/");
         if (!cleaned.StartsWith("/")) cleaned = "/" + cleaned;
         return cleaned;
     }
@@ -287,8 +288,8 @@ public class FileManagerController : ControllerBase
     private static FileManagerDirectoryContent MapToFileManagerItem(FileItem item)
     {
         // Ensure path is never null or empty
-        var itemPath = string.IsNullOrWhiteSpace(item.Path) ? "/" : item.Path;
-        var itemName = !string.IsNullOrWhiteSpace(item.Name) ? item.Name : "Unknown";
+        var itemPath = string.IsNullOrWhiteSpace(item.Path) ? "/" : Decode(item.Path);
+        var itemName = !string.IsNullOrWhiteSpace(item.Name) ? Decode(item.Name) : "Unknown";
 
         // Calculate filterPath - for root level items, use "/"
         var filterPath = GetDirectoryPath(itemPath);
@@ -312,8 +313,8 @@ public class FileManagerController : ControllerBase
 
     private static FileManagerDirectoryContent MapToCwd(string path, IReadOnlyList<FileItem> items, string rootAliasName)
     {
-        var normalized = NormalizePath(path);
-        var name = GetNameFromPath(normalized);
+        var normalized = Decode(NormalizePath(path));
+        var name = Decode(GetNameFromPath(normalized));
         var hasChild = items.Any(i => i.IsDirectory);
 
         // Get the parent path for filterPath
@@ -343,6 +344,8 @@ public class FileManagerController : ControllerBase
         var last = normalized.LastIndexOf('/');
         return last >= 0 ? normalized[(last + 1)..] : normalized;
     }
+
+    private static string Decode(string value) => Uri.UnescapeDataString(value.Replace("+", " "));
 
     private static string FirstNonEmpty(params string?[] values)
     {
