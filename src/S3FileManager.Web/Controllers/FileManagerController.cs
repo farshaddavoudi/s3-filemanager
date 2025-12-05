@@ -195,7 +195,14 @@ public class FileManagerController : ControllerBase
     {
         var normalizedPath = NormalizePath(path);
         var cwd = MapToCwd(normalizedPath, items, _rootAliasName);
-        var files = items.Select(MapToFileManagerItem).ToList();
+        var currentKey = CanonicalKey(normalizedPath);
+        var files = items
+            .Select(MapToFileManagerItem)
+            .Where(f => !CanonicalKey(f.Path).Equals(currentKey, StringComparison.OrdinalIgnoreCase)) // drop self placeholder
+            .OrderBy(f => f.IsFile) // prefer directory entry when duplicate keys exist
+            .GroupBy(f => CanonicalKey(f.Path), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .ToList();
         return Ok(new { cwd, files });
     }
 
@@ -256,10 +263,7 @@ public class FileManagerController : ControllerBase
     private static string NormalizePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path)) return "/";
-        var decoded = Decode(path);
-        var cleaned = decoded.Replace("\\", "/");
-        if (!cleaned.StartsWith("/")) cleaned = "/" + cleaned;
-        return cleaned;
+        return CanonicalPath(path);
     }
 
     private static string Combine(string basePath, string name)
@@ -271,29 +275,35 @@ public class FileManagerController : ControllerBase
 
     private static string EnsureFolder(string path)
     {
+        if (string.IsNullOrWhiteSpace(path)) return "/";
+        if (path == "/") return "/";
         return path.EndsWith("/") ? path : path + "/";
     }
 
     private static string GetDirectoryPath(string path)
     {
-        var normalized = NormalizePath(path);
+        var normalized = CanonicalPath(path);
         if (normalized == "/") return "/";
-        var trimmed = normalized.TrimEnd('/');
-        var lastSlash = trimmed.LastIndexOf('/');
+        var lastSlash = normalized.LastIndexOf('/');
         if (lastSlash <= 0) return "/";
-        var result = trimmed[..lastSlash];
+        var result = normalized[..lastSlash];
         return string.IsNullOrEmpty(result) ? "/" : result;
     }
 
     private static FileManagerDirectoryContent MapToFileManagerItem(FileItem item)
     {
         // Ensure path is never null or empty
-        var itemPath = string.IsNullOrWhiteSpace(item.Path) ? "/" : Decode(item.Path);
+        var rawPath = string.IsNullOrWhiteSpace(item.Path) ? "/" : item.Path;
+        var canonical = CanonicalPath(rawPath);
+        var pathForUi = item.IsDirectory && canonical != "/"
+            ? EnsureFolder(canonical)
+            : canonical;
+
         var itemName = !string.IsNullOrWhiteSpace(item.Name) ? Decode(item.Name) : "Unknown";
 
         // Calculate filterPath - for root level items, use "/"
-        var filterPath = GetDirectoryPath(itemPath);
-        var id = itemPath;
+        var parentCanonical = GetDirectoryPath(canonical);
+        var parentId = parentCanonical == "/" ? "/" : EnsureFolder(parentCanonical);
 
         return new FileManagerDirectoryContent
         {
@@ -304,22 +314,24 @@ public class FileManagerController : ControllerBase
             DateCreated = (item.LastModified ?? DateTimeOffset.UtcNow).UtcDateTime,
             HasChild = item.IsDirectory,
             Type = item.IsDirectory ? "Directory" : (!string.IsNullOrWhiteSpace(item.Name) ? Path.GetExtension(item.Name) : ""),
-            FilterPath = filterPath,
-            Path = itemPath,
-            Id = id,
-            ParentId = filterPath
+            FilterPath = parentId,
+            Path = pathForUi,
+            Id = pathForUi,
+            ParentId = parentId
         };
     }
 
     private static FileManagerDirectoryContent MapToCwd(string path, IReadOnlyList<FileItem> items, string rootAliasName)
     {
-        var normalized = Decode(NormalizePath(path));
-        var name = Decode(GetNameFromPath(normalized));
+        var canonical = CanonicalPath(path);
+        var pathForUi = canonical == "/" ? "/" : EnsureFolder(canonical);
+        var name = Decode(GetNameFromPath(canonical));
         var hasChild = items.Any(i => i.IsDirectory);
 
         // Get the parent path for filterPath
-        var filterPath = GetDirectoryPath(normalized);
-        var id = normalized;
+        var filterPathCanonical = GetDirectoryPath(canonical);
+        var filterPathUi = filterPathCanonical == "/" ? string.Empty : EnsureFolder(filterPathCanonical);
+        var id = pathForUi;
 
         return new FileManagerDirectoryContent
         {
@@ -330,10 +342,10 @@ public class FileManagerController : ControllerBase
             HasChild = hasChild,
             IsFile = false,
             Type = "Folder",
-            FilterPath = filterPath == "/" ? string.Empty : filterPath,
-            Path = normalized,
+            FilterPath = filterPathUi,
+            Path = pathForUi,
             Id = id,
-            ParentId = string.IsNullOrEmpty(filterPath) ? null : GetDirectoryPath(filterPath)
+            ParentId = string.IsNullOrEmpty(filterPathUi) ? null : GetDirectoryPath(filterPathUi)
         };
     }
 
@@ -346,6 +358,20 @@ public class FileManagerController : ControllerBase
     }
 
     private static string Decode(string value) => Uri.UnescapeDataString(value.Replace("+", " "));
+
+    private static string CanonicalPath(string path)
+    {
+        var decoded = Decode(path);
+        var cleaned = decoded.Replace("\\", "/");
+        if (!cleaned.StartsWith("/")) cleaned = "/" + cleaned;
+        while (cleaned.Contains("//", StringComparison.Ordinal))
+            cleaned = cleaned.Replace("//", "/", StringComparison.Ordinal);
+        cleaned = cleaned.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(cleaned)) cleaned = "/";
+        return cleaned;
+    }
+
+    private static string CanonicalKey(string path) => CanonicalPath(path);
 
     private static string FirstNonEmpty(params string?[] values)
     {

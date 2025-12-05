@@ -37,9 +37,21 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
 
             await foreach (var entry in results.ConfigureAwait(false))
             {
+                // Skip the placeholder object that represents the current folder itself
+                if (!string.IsNullOrEmpty(prefix) &&
+                    entry.Key.Equals(prefix, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 if (entry.IsDir)
                 {
                     // common prefix (virtual folder)
+                    items.Add(MapPrefixToDirectory(entry.Key));
+                }
+                else if (entry.Key.EndsWith("/", StringComparison.Ordinal))
+                {
+                    // Placeholder "folder object" (zero-byte key ending with '/')
                     items.Add(MapPrefixToDirectory(entry.Key));
                 }
                 else
