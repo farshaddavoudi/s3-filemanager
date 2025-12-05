@@ -53,13 +53,13 @@ public class FileManagerController : ControllerBase
         {
             return action switch
             {
-                "read"    => await HandleReadAsync(currentPath, user, cancellationToken),
+                "read" => await HandleReadAsync(currentPath, user, cancellationToken),
                 "details" => await HandleDetailsAsync(currentPath, request, user, cancellationToken),
-                "create"  => await HandleCreateAsync(currentPath, request, user, cancellationToken),
-                "delete"  => await HandleDeleteAsync(currentPath, request, user, cancellationToken),
-                "rename"  => await HandleRenameAsync(currentPath, request, user, cancellationToken),
-                "move"    => await HandlePasteAsync(currentPath, request, user, cancellationToken),
-                "paste"   => await HandlePasteAsync(currentPath, request, user, cancellationToken),
+                "create" => await HandleCreateAsync(currentPath, request, user, cancellationToken),
+                "delete" => await HandleDeleteAsync(currentPath, request, user, cancellationToken),
+                "rename" => await HandleRenameAsync(currentPath, request, user, cancellationToken),
+                "move" => await HandlePasteAsync(currentPath, request, user, cancellationToken),
+                "paste" => await HandlePasteAsync(currentPath, request, user, cancellationToken),
                 _ => BadRequest(new { error = "Unsupported action" })
             };
         }
@@ -119,26 +119,15 @@ public class FileManagerController : ControllerBase
 
         var items = await _storage.ListAsync(path, user, cancellationToken);
         Console.WriteLine($"[HandleDeleteAsync] Found {items.Count} items in current path");
-        
+
         var lookup = items.ToDictionary(i => i.Name, StringComparer.OrdinalIgnoreCase);
 
         foreach (var name in names)
         {
-            // Syncfusion is expected to send names relative to the current path,
-            // but some browsers/flows send full paths (including trailing slash for folders).
-            var isAbsolute = name.StartsWith("/", StringComparison.Ordinal);
-
-            // Try to detect directory flag either from the current listing or from the incoming name shape.
-            var baseName = GetNameFromPath(name);
-            var isDirectory = (lookup.TryGetValue(baseName, out var item) && item.IsDirectory)
+            var isDirectory = (lookup.TryGetValue(GetNameFromPath(name), out var item) && item.IsDirectory)
                               || name.EndsWith("/", StringComparison.Ordinal);
 
-            var deletePath = isAbsolute
-                ? CanonicalPath(name)
-                : Combine(path, name);
-
-            if (isDirectory)
-                deletePath = EnsureFolder(deletePath);
+            var deletePath = ResolveDeletePath(path, name, isDirectory);
 
             Console.WriteLine($"[HandleDeleteAsync] Item '{name}': isDirectory={isDirectory}, resolved deletePath='{deletePath}'");
 
@@ -288,25 +277,9 @@ public class FileManagerController : ControllerBase
     {
         var user = BuildUserContext();
 
-        var basePath = NormalizePath(path);
-        var primary = FirstNonEmpty(id, name);
+        var resolvedPath = ResolveImagePath(path, id, name);
 
-        // Syncfusion sends id as a fully qualified path (e.g., "/folder/file.png") while also passing path="/folder/".
-        // Prefer the absolute id when present; otherwise combine with base path.
-        string resolvedPath;
-        if (!string.IsNullOrWhiteSpace(primary))
-        {
-            var candidate = CanonicalPath(primary);
-            resolvedPath = candidate.StartsWith(basePath, StringComparison.OrdinalIgnoreCase)
-                ? candidate
-                : CanonicalPath(Combine(basePath, primary));
-        }
-        else
-        {
-            resolvedPath = basePath;
-        }
-
-        Console.WriteLine($"[GetImage] verb={verb} path='{path}' id='{id}' name='{name}' => basePath='{basePath}' resolvedPath='{resolvedPath}'");
+        Console.WriteLine($"[GetImage] verb={verb} path='{path}' id='{id}' name='{name}' => resolvedPath='{resolvedPath}'");
 
         if (string.IsNullOrWhiteSpace(resolvedPath) || resolvedPath == "/")
         {
@@ -534,6 +507,32 @@ public class FileManagerController : ControllerBase
             }
         }
         return "/";
+    }
+
+    internal static string ResolveDeletePath(string currentPath, string name, bool isDirectory)
+    {
+        var isAbsolute = name.StartsWith("/", StringComparison.Ordinal);
+        var deletePath = isAbsolute ? CanonicalPath(name) : Combine(currentPath, name);
+        if (isDirectory) deletePath = EnsureFolder(deletePath);
+        return deletePath;
+    }
+
+    internal static string ResolveImagePath(string? path, string? id, string? name)
+    {
+        var basePath = NormalizePath(path);
+        var primary = FirstNonEmpty(id, name);
+
+        if (!string.IsNullOrWhiteSpace(primary))
+        {
+            if (primary.StartsWith("/", StringComparison.Ordinal))
+            {
+                return CanonicalPath(primary);
+            }
+
+            return CanonicalPath(Combine(basePath, primary));
+        }
+
+        return basePath;
     }
 
     public sealed class FileManagerRequest

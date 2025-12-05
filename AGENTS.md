@@ -94,12 +94,19 @@ AI agents must respect these architectural layers:
 - Keep MinIO-specific logic in the MinIO backend project.
 - Avoid static/global state.
 - Keep code testable (small, focused classes).
+- After changes, run the automated test suite (`dotnet test S3FileManager.sln`) to ensure Syncfusion/MinIO conventions stay intact.
 
 ### 4.1 Error Handling
 
 - Use meaningful HTTP status codes (400/401/403/404/500).
 - Do not leak internal exception details in responses in production builds.
 - Log failures via `IAuditLogProvider` or other logging mechanisms.
+
+### 4.2 Syncfusion FileManager conventions (do not break)
+
+- `Names` passed to delete may be absolute (e.g., `/folder/file`); never double-prefix with current path. Always canonicalize and keep trailing slash for directories.
+- Thumbnail/image requests hit `/api/files/image` with `id` often set to the absolute file path; prefer that absolute path over combining with the folder path.
+- `FilterPath` and `FilterId` must stay in sync with parent paths to keep Syncfusion previews working.
 
 ## 5. Virtual Agent Roles
 
