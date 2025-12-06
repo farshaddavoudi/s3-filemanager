@@ -22,9 +22,9 @@ A modern, self-hosted web file manager for S3/MinIO — extensible backends, fle
 
 ## 📌 Overview
 
-**S3 File Manager** is a self-hosted, extensible web application that delivers a modern file-explorer experience on top of any **S3-compatible object storage**, starting with native support for **MinIO**.
+**S3 File Manager** is a self-hosted, extensible web application that delivers a modern file-explorer experience on top of any **S3-compatible object storage**, starting with native support for **MinIO** object storage.
 
-**Tech stack**
+**Tech stack (doesn't matter when self-hosted with Docker)**
 - .NET 10 / ASP.NET Core (C#)
 - Blazor Server-based web UI
 - Syncfusion Blazor File Manager as the primary UI component library
