@@ -4,6 +4,7 @@ using S3FileManager.Core;
 using S3FileManager.Web.Configuration;
 using Syncfusion.Blazor.FileManager;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace S3FileManager.Web.Controllers;
 
@@ -14,6 +15,7 @@ public class FileManagerController : ControllerBase
     private readonly IObjectStorageBackend _storage;
     private readonly IAccessPolicyProvider _accessPolicy;
     private readonly IAuditLogProvider _audit;
+    private readonly ILogger<FileManagerController> _logger;
     private readonly string _rootAliasName;
     private static readonly FileExtensionContentTypeProvider ContentTypeProvider = new();
 
@@ -21,11 +23,13 @@ public class FileManagerController : ControllerBase
         IObjectStorageBackend storage,
         IAccessPolicyProvider accessPolicy,
         IAuditLogProvider audit,
-        AppConfig appConfig)
+        AppConfig appConfig,
+        ILogger<FileManagerController> logger)
     {
         _storage = storage;
         _accessPolicy = accessPolicy;
         _audit = audit;
+        _logger = logger;
         _rootAliasName = string.IsNullOrWhiteSpace(appConfig.FileManagerRootAlias)
             ? "File Storage"
             : appConfig.FileManagerRootAlias;
@@ -311,7 +315,11 @@ public class FileManagerController : ControllerBase
     {
         var user = BuildUserContext();
         var requestedPath = ResolveDownloadPath(path, downloadInput);
+        _logger.LogInformation("Download requested. path='{Path}', downloadInput='{DownloadInput}', resolved='{Resolved}'",
+            path ?? "(null)", downloadInput ?? "(null)", requestedPath ?? "(null)");
+
         var normalizedPath = NormalizePath(requestedPath);
+        _logger.LogInformation("Download normalized path='{NormalizedPath}'", normalizedPath);
 
         var perms = await _accessPolicy.GetPermissionsAsync(user, normalizedPath, cancellationToken);
         if (!perms.CanRead) return Forbid();
@@ -487,18 +495,62 @@ public class FileManagerController : ControllerBase
         return string.Empty;
     }
 
-    private static string? ResolveDownloadPath(string? path, string? downloadInput)
+    private static readonly JsonSerializerOptions DownloadJsonOptions = new()
     {
-        if (!string.IsNullOrWhiteSpace(path)) return path;
+        PropertyNameCaseInsensitive = true
+    };
+
+    internal static string? ResolveDownloadPath(string? path, string? downloadInput)
+    {
+        // Syncfusion posts the selection as `downloadInput` (form-urlencoded JSON).
+        // Shapes observed:
+        //  - { names: ["/folder/file.txt"], path:"/folder/", data:[{ path:"/folder/file.txt", name:"file.txt", ... }] }
+        //  - legacy: { items:[{ path:"/folder/", name:"file.txt" }] }
+        //
+        // Goal: return an absolute, canonical object path to the selected file.
         if (!string.IsNullOrWhiteSpace(downloadInput))
         {
             try
             {
-                var parsed = JsonSerializer.Deserialize<DownloadInput>(downloadInput);
-                var selected = parsed?.Items?.FirstOrDefault();
+                var parsed = JsonSerializer.Deserialize<DownloadInput>(downloadInput, DownloadJsonOptions);
+                var selected = parsed?.Items?.FirstOrDefault() ?? parsed?.Data?.FirstOrDefault();
+
+                // 1) If the item already carries a full path/id, use it directly.
+                var candidatePath = FirstNonEmpty(
+                    selected?.Path,
+                    selected?.Id,
+                    parsed?.Names?.FirstOrDefault()
+                );
+                if (!string.IsNullOrWhiteSpace(candidatePath))
+                {
+                    // Names may already be absolute (starting with '/'), ensure canonical form.
+                    if (candidatePath.StartsWith("/", StringComparison.Ordinal))
+                    {
+                        return CanonicalPath(candidatePath);
+                    }
+
+                    // Relative name: combine with the form's path or item's parent/filter path.
+                    var basePath = NormalizePath(FirstNonEmpty(
+                        path,
+                        parsed?.Path,
+                        selected?.ParentId,
+                        selected?.FilterPath,
+                        selected?.FilterId,
+                        "/"));
+                    return Combine(basePath, candidatePath);
+                }
+
+                // 2) Fall back to combining the item name with best-effort base path.
                 if (!string.IsNullOrWhiteSpace(selected?.Name))
                 {
-                    return Combine(NormalizePath(selected.Path ?? "/"), selected.Name);
+                    var basePath = NormalizePath(FirstNonEmpty(
+                        path,
+                        parsed?.Path,
+                        selected?.ParentId,
+                        selected?.FilterPath,
+                        selected?.FilterId,
+                        "/"));
+                    return Combine(basePath, selected.Name);
                 }
             }
             catch
@@ -506,6 +558,9 @@ public class FileManagerController : ControllerBase
                 // ignore parse errors and fall through
             }
         }
+
+        if (!string.IsNullOrWhiteSpace(path)) return path;
+
         return "/";
     }
 
@@ -547,12 +602,25 @@ public class FileManagerController : ControllerBase
 
     private sealed class DownloadInput
     {
+        public string? Path { get; set; }
+
+        // Syncfusion currently posts selected items under `data`; older code used `items`.
+        [JsonPropertyName("data")]
+        public List<DownloadItem>? Data { get; set; }
+
+        [JsonPropertyName("items")]
         public List<DownloadItem>? Items { get; set; }
+
+        public List<string>? Names { get; set; }
     }
 
     private sealed class DownloadItem
     {
         public string? Name { get; set; }
         public string? Path { get; set; }
+        public string? Id { get; set; }
+        public string? ParentId { get; set; }
+        public string? FilterPath { get; set; }
+        public string? FilterId { get; set; }
     }
 }
