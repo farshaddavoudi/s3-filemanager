@@ -13,12 +13,100 @@ public class RenameTests
     [Fact]
     public async Task Rename_File_DeduplicatesPathAndMovesCorrectly()
     {
-        // Arrange
         var storage = new FakeStorage(new[]
         {
             new FileItem("ms-dotnet.jpg", "/farshad/ms-dotnet.jpg", false, 123, null)
         });
-        var controller = new FileManagerController(
+        var controller = CreateController(storage);
+
+        var request = new Request
+        {
+            Action = "rename",
+            Path = "/farshad/farshad", // duplicated segment (bug repro)
+            Name = "ms-dotnet.jpg",
+            NewName = "dotnet.jpg"
+        };
+
+        var result = await controller.Operations(request, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Single(storage.Moves);
+        Assert.Equal("/farshad/ms-dotnet.jpg", storage.Moves[0].From);
+        Assert.Equal("/farshad/dotnet.jpg", storage.Moves[0].To);
+    }
+
+    [Fact]
+    public async Task Rename_EmptyFolder_WhenPathPointsToFolderItself_MovesFolder()
+    {
+        var storage = new FakeStorage(Array.Empty<FileItem>());
+        var controller = CreateController(storage);
+
+        var request = new Request
+        {
+            Action = "rename",
+            Path = "/alpha/alpha/Test/", // points at the folder itself
+            Name = "Test",
+            NewName = "Renamed"
+        };
+
+        var result = await controller.Operations(request, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Single(storage.Moves);
+        Assert.Equal("/alpha/alpha/Test/", storage.Moves[0].From);
+        Assert.Equal("/alpha/alpha/Renamed/", storage.Moves[0].To);
+    }
+
+    [Fact]
+    public async Task Rename_Folder_WithDuplicatedParentSegment_NormalizesAndRenamesCorrectFolder()
+    {
+        var storage = new FakeStorage(Array.Empty<FileItem>());
+        var controller = CreateController(storage);
+
+        var request = new Request
+        {
+            Action = "rename",
+            Path = "/mahnam3/mahnam3/Test/", // duplicated parent segment from client
+            Name = "Test",
+            NewName = "Fest"
+        };
+
+        var result = await controller.Operations(request, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Single(storage.Moves);
+        Assert.Equal("/mahnam3/Test/", storage.Moves[0].From);
+        Assert.Equal("/mahnam3/Fest/", storage.Moves[0].To);
+    }
+
+    [Fact]
+    public async Task Rename_Folder_WithChildren_UsesListingToDetectDirectory()
+    {
+        var storage = new FakeStorage(new[]
+        {
+            new FileItem("Child", "/alpha/Child/", true, null, null)
+        });
+        var controller = CreateController(storage);
+
+        var request = new Request
+        {
+            Action = "rename",
+            Path = "/alpha",
+            Name = "Child",
+            NewName = "RenamedChild"
+        };
+
+        var result = await controller.Operations(request, CancellationToken.None);
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Single(storage.Moves);
+        Assert.Equal("/alpha/Child/", storage.Moves[0].From);
+        Assert.Equal("/alpha/RenamedChild/", storage.Moves[0].To);
+    }
+
+    private static FileManagerController CreateController(FakeStorage storage)
+    {
+        return new FileManagerController(
             storage,
             new AllowAllAccessPolicy(),
             new NoopAuditLog(),
@@ -30,23 +118,6 @@ public class RenameTests
                 MinioBucket = "bucket"
             },
             NullLogger<FileManagerController>.Instance);
-
-        var request = new Request
-        {
-            Action = "rename",
-            Path = "/farshad/farshad", // duplicated segment (bug repro)
-            Name = "ms-dotnet.jpg",
-            NewName = "dotnet.jpg"
-        };
-
-        // Act
-        var result = await controller.Operations(request, CancellationToken.None);
-
-        // Assert
-        Assert.IsType<OkObjectResult>(result);
-        Assert.Single(storage.Moves);
-        Assert.Equal("/farshad/ms-dotnet.jpg", storage.Moves[0].From);
-        Assert.Equal("/farshad/dotnet.jpg", storage.Moves[0].To);
     }
 
     private sealed class FakeStorage : IObjectStorageBackend

@@ -157,20 +157,23 @@ public class FileManagerController : ControllerBase
         var newName = FirstNonEmpty(request.NewName, request.TargetPath);
         if (string.IsNullOrWhiteSpace(newName)) return BadRequest(new { error = "Missing new name" });
 
-        var effectivePath = DeduplicateTrailingSegment(path);
-        if (!string.Equals(effectivePath, path, StringComparison.Ordinal))
-        {
-            Console.WriteLine($"[HandleRenameAsync] detected duplicate tail segment; path='{path}' => '{effectivePath}'");
-        }
+        var effectivePath = NormalizeRenamePath(path);
 
         Console.WriteLine($"[HandleRenameAsync] path='{effectivePath}', name='{name}', newName='{newName}', targetPath='{request.TargetPath}', action='{request.Action}'");
 
-        var items = await _storage.ListAsync(effectivePath, user, cancellationToken);
-        var isDirectory = items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase))?.IsDirectory == true;
+        var renamingCurrentFolder = string.Equals(GetNameFromPath(effectivePath), name, StringComparison.OrdinalIgnoreCase);
+        var listingPath = renamingCurrentFolder ? GetDirectoryPath(effectivePath) : effectivePath;
 
-        var source = Combine(effectivePath, name);
+        var items = await _storage.ListAsync(listingPath, user, cancellationToken);
+        var isDirectory = renamingCurrentFolder ||
+                          items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase))?.IsDirectory == true ||
+                          name.EndsWith("/", StringComparison.Ordinal);
+
+        var source = renamingCurrentFolder ? effectivePath : Combine(listingPath, name);
         if (isDirectory) source = EnsureFolder(source);
-        var destination = Combine(GetDirectoryPath(source), newName!);
+
+        var destinationParent = renamingCurrentFolder ? GetDirectoryPath(effectivePath) : listingPath;
+        var destination = Combine(destinationParent, newName!);
         if (isDirectory) destination = EnsureFolder(destination);
 
         Console.WriteLine($"[HandleRenameAsync] source='{source}', destination='{destination}', isDirectory={isDirectory}");
@@ -365,6 +368,20 @@ public class FileManagerController : ControllerBase
         return CanonicalPath(path);
     }
 
+    private static string NormalizeRenamePath(string path)
+    {
+        var canonical = CanonicalPath(path);
+        var dedupAdjacent = RemoveAdjacentDuplicateSegments(canonical);
+        var dedupTail = DeduplicateTrailingSegment(dedupAdjacent);
+
+        if (!string.Equals(path, dedupTail, StringComparison.Ordinal))
+        {
+            Console.WriteLine($"[NormalizeRenamePath] '{path}' -> '{dedupTail}'");
+        }
+
+        return dedupTail;
+    }
+
     /// <summary>
     /// If the last two path segments are identical (e.g., "/foo/foo"), drop the final duplicate.
     /// This guards against duplicated folder segments occasionally sent by the client during rename.
@@ -382,6 +399,28 @@ public class FileManagerController : ControllerBase
         }
 
         return canonical;
+    }
+
+    /// <summary>
+    /// Removes adjacent duplicate path segments anywhere in the path (case-insensitive).
+    /// Example: "/mahnam3/mahnam3/Test" => "/mahnam3/Test"
+    /// </summary>
+    private static string RemoveAdjacentDuplicateSegments(string path)
+    {
+        var canonical = CanonicalPath(path);
+        if (canonical == "/") return canonical;
+
+        var segments = canonical.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var deduped = new List<string>(segments.Length);
+        foreach (var segment in segments)
+        {
+            if (deduped.Count == 0 || !deduped[^1].Equals(segment, StringComparison.OrdinalIgnoreCase))
+            {
+                deduped.Add(segment);
+            }
+        }
+
+        return "/" + string.Join("/", deduped);
     }
 
     private static string Combine(string basePath, string name)
@@ -647,7 +686,7 @@ public class FileManagerController : ControllerBase
         public override string ToString()
         {
             // Helpful for debugging payload mismatches from the client
-            return $"Action='{Action}', Path='{Path}', TargetPath='{TargetPath}', NewName='{NewName}', Name='{Name}', Names=[{string.Join(",", Names ?? new List<string>())}]";
+            return $"Action='{Action}', Path='{Path}', TargetPath='{TargetPath}', NewName='{NewName}', Name='{Name}', Names=[{string.Join(",", Names ?? Enumerable.Empty<string>())}]";
         }
     }
 

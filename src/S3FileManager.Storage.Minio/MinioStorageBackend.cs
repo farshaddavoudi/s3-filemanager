@@ -1,6 +1,7 @@
 using Minio;
 using Minio.DataModel;
 using Minio.DataModel.Args;
+using Minio.Exceptions;
 using S3FileManager.Core;
 
 namespace S3FileManager.Storage.Minio;
@@ -234,6 +235,14 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
             var keys = await CollectKeysForPrefixAsync(sourcePrefix, cancellationToken).ConfigureAwait(false);
             Console.WriteLine($"[Minio.MoveAsync] Treating as directory move. keysFound={keys.Count}, sourcePrefix='{sourcePrefix}', destinationPrefix='{destinationPrefix}'");
 
+            // Empty directory (no objects). Create a placeholder at destination and remove the source placeholder if present.
+            if (keys.Count == 0)
+            {
+                await EnsureFolderPlaceholderAsync(destinationPrefix, cancellationToken).ConfigureAwait(false);
+                await DeleteFolderPlaceholderIfExistsAsync(sourcePrefix, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             foreach (var key in keys)
             {
                 var relative = key[sourcePrefix.Length..];
@@ -416,6 +425,46 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
         }
 
         return keys;
+    }
+
+    private async Task EnsureFolderPlaceholderAsync(string destinationPrefix, CancellationToken cancellationToken)
+    {
+        var objectKey = destinationPrefix.TrimStart('/');
+        if (!objectKey.EndsWith("/", StringComparison.Ordinal))
+            objectKey += "/";
+
+        Console.WriteLine($"[Minio.EnsureFolderPlaceholderAsync] Creating placeholder '{objectKey}'");
+
+        var putArgs = new PutObjectArgs()
+            .WithBucket(_bucketName)
+            .WithObject(objectKey)
+            .WithStreamData(Stream.Null)
+            .WithObjectSize(0)
+            .WithContentType("application/octet-stream");
+
+        await _client.PutObjectAsync(putArgs, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task DeleteFolderPlaceholderIfExistsAsync(string sourcePrefix, CancellationToken cancellationToken)
+    {
+        var objectKey = sourcePrefix.TrimStart('/');
+        if (!objectKey.EndsWith("/", StringComparison.Ordinal))
+            objectKey += "/";
+
+        Console.WriteLine($"[Minio.DeleteFolderPlaceholderIfExistsAsync] Attempting to delete placeholder '{objectKey}'");
+
+        try
+        {
+            var args = new RemoveObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(objectKey);
+
+            await _client.RemoveObjectAsync(args, cancellationToken).ConfigureAwait(false);
+        }
+        catch (MinioException ex)
+        {
+            Console.WriteLine($"[Minio.DeleteFolderPlaceholderIfExistsAsync] Ignore missing placeholder '{objectKey}': {ex.Message}");
+        }
     }
 
     private async Task CopyObjectAsync(string sourceKey, string destinationKey, CancellationToken cancellationToken)
