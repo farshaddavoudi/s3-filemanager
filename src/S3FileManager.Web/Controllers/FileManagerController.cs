@@ -53,6 +53,8 @@ public class FileManagerController : ControllerBase
         var action = request.Action?.ToLowerInvariant();
         var currentPath = NormalizePath(request.Path);
 
+        Console.WriteLine($"[Operations] action='{action}', path='{currentPath}', request={request}");
+
         try
         {
             return action switch
@@ -69,6 +71,7 @@ public class FileManagerController : ControllerBase
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[Operations] action='{action}', path='{currentPath}' failed: {ex}");
             return StatusCode(500, new { error = "Internal server error", message = ex.Message });
         }
     }
@@ -147,27 +150,42 @@ public class FileManagerController : ControllerBase
 
     private async Task<IActionResult> HandleRenameAsync(string path, FileManagerRequest request, UserContext user, CancellationToken cancellationToken)
     {
-        var name = request.Names?.FirstOrDefault();
+        // Syncfusion posts the current item name in `name`; older payloads may still use `names`.
+        var name = FirstNonEmpty(request.Names?.FirstOrDefault(), request.Name);
         if (string.IsNullOrWhiteSpace(name)) return BadRequest(new { error = "Missing name for rename" });
-        var newName = FirstNonEmpty(request.NewName, request.Name, request.TargetPath);
+
+        var newName = FirstNonEmpty(request.NewName, request.TargetPath);
         if (string.IsNullOrWhiteSpace(newName)) return BadRequest(new { error = "Missing new name" });
 
-        var items = await _storage.ListAsync(path, user, cancellationToken);
+        var effectivePath = DeduplicateTrailingSegment(path);
+        if (!string.Equals(effectivePath, path, StringComparison.Ordinal))
+        {
+            Console.WriteLine($"[HandleRenameAsync] detected duplicate tail segment; path='{path}' => '{effectivePath}'");
+        }
+
+        Console.WriteLine($"[HandleRenameAsync] path='{effectivePath}', name='{name}', newName='{newName}', targetPath='{request.TargetPath}', action='{request.Action}'");
+
+        var items = await _storage.ListAsync(effectivePath, user, cancellationToken);
         var isDirectory = items.FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase))?.IsDirectory == true;
 
-        var source = Combine(path, name);
+        var source = Combine(effectivePath, name);
         if (isDirectory) source = EnsureFolder(source);
         var destination = Combine(GetDirectoryPath(source), newName!);
         if (isDirectory) destination = EnsureFolder(destination);
+
+        Console.WriteLine($"[HandleRenameAsync] source='{source}', destination='{destination}', isDirectory={isDirectory}");
 
         var sourcePerms = await _accessPolicy.GetPermissionsAsync(user, source, cancellationToken);
         var destPerms = await _accessPolicy.GetPermissionsAsync(user, destination, cancellationToken);
         if (!sourcePerms.CanWrite || !destPerms.CanWrite || !sourcePerms.CanDelete) return Forbid();
 
+        Console.WriteLine($"[HandleRenameAsync] permissions: source(write={sourcePerms.CanWrite}, delete={sourcePerms.CanDelete}), dest(write={destPerms.CanWrite})");
+
         await _storage.MoveAsync(source, destination, user, cancellationToken);
         await _audit.LogAsync(new AuditEvent(DateTimeOffset.UtcNow, user.UserId, "Rename", $"{source} -> {destination}"), cancellationToken);
 
         var refreshPath = GetDirectoryPath(destination);
+        Console.WriteLine($"[HandleRenameAsync] refreshPath='{refreshPath}'");
         return await BuildListingResultAsync(refreshPath, user, cancellationToken);
     }
 
@@ -347,10 +365,37 @@ public class FileManagerController : ControllerBase
         return CanonicalPath(path);
     }
 
+    /// <summary>
+    /// If the last two path segments are identical (e.g., "/foo/foo"), drop the final duplicate.
+    /// This guards against duplicated folder segments occasionally sent by the client during rename.
+    /// </summary>
+    private static string DeduplicateTrailingSegment(string path)
+    {
+        var canonical = CanonicalPath(path);
+        if (canonical == "/") return canonical;
+
+        var segments = canonical.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length >= 2 && segments[^1].Equals(segments[^2], StringComparison.OrdinalIgnoreCase))
+        {
+            var trimmed = "/" + string.Join("/", segments[..^1]);
+            return string.IsNullOrWhiteSpace(trimmed) ? "/" : trimmed;
+        }
+
+        return canonical;
+    }
+
     private static string Combine(string basePath, string name)
     {
         var trimmedBase = basePath.TrimEnd('/');
         var trimmedName = name.TrimStart('/');
+
+        // If the incoming name is already an absolute path (starts with "/"), prefer it directly
+        // to avoid double-prefixing when the client sends absolute paths.
+        if (name.StartsWith("/", StringComparison.Ordinal))
+        {
+            return CanonicalPath(name);
+        }
+
         return $"{trimmedBase}/{trimmedName}";
     }
 
@@ -598,6 +643,12 @@ public class FileManagerController : ControllerBase
         public string? NewName { get; set; }
         public string? Name { get; set; }
         public List<string>? Names { get; set; }
+
+        public override string ToString()
+        {
+            // Helpful for debugging payload mismatches from the client
+            return $"Action='{Action}', Path='{Path}', TargetPath='{TargetPath}', NewName='{NewName}', Name='{Name}', Names=[{string.Join(",", Names ?? new List<string>())}]";
+        }
     }
 
     private sealed class DownloadInput

@@ -207,18 +207,24 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
             var looksLikeDirectory = IsDirectoryPath(fromPath);
             var sourcePrefix = looksLikeDirectory ? NormalizePrefix(fromPath) : NormalizeObjectKey(fromPath);
 
+            Console.WriteLine($"[Minio.MoveAsync] from='{fromPath}', to='{toPath}', looksLikeDirectory={looksLikeDirectory}, initialSourcePrefix='{sourcePrefix}'");
+
             // If not explicitly a directory, detect by checking if there are objects under the prefix.
             if (!looksLikeDirectory)
             {
                 var tentativePrefix = NormalizePrefix(fromPath);
                 looksLikeDirectory = await PrefixHasObjectsAsync(tentativePrefix, cancellationToken).ConfigureAwait(false);
                 if (looksLikeDirectory)
+                {
                     sourcePrefix = tentativePrefix;
+                    Console.WriteLine($"[Minio.MoveAsync] Detected directory based on prefix contents. Using sourcePrefix='{sourcePrefix}'");
+                }
             }
 
             if (!looksLikeDirectory)
             {
                 var destinationKey = NormalizeObjectKey(toPath);
+                Console.WriteLine($"[Minio.MoveAsync] Treating as file move. sourceKey='{sourcePrefix}', destinationKey='{destinationKey}'");
                 await CopyObjectAsync(sourcePrefix, destinationKey, cancellationToken).ConfigureAwait(false);
                 await DeleteAsync(fromPath, user, cancellationToken).ConfigureAwait(false);
                 return;
@@ -226,11 +232,13 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
 
             var destinationPrefix = NormalizePrefix(EnsureTrailingSlash(toPath));
             var keys = await CollectKeysForPrefixAsync(sourcePrefix, cancellationToken).ConfigureAwait(false);
+            Console.WriteLine($"[Minio.MoveAsync] Treating as directory move. keysFound={keys.Count}, sourcePrefix='{sourcePrefix}', destinationPrefix='{destinationPrefix}'");
 
             foreach (var key in keys)
             {
                 var relative = key[sourcePrefix.Length..];
                 var destinationKey = string.Concat(destinationPrefix, relative);
+                Console.WriteLine($"[Minio.MoveAsync] Copy '{key}' -> '{destinationKey}'");
                 await CopyObjectAsync(key, destinationKey, cancellationToken).ConfigureAwait(false);
             }
 
@@ -247,10 +255,15 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
                     var first = errors[0];
                     throw new InvalidOperationException($"Failed to delete '{first.Key}' after move: {first.Message}");
                 }
+                else
+                {
+                    Console.WriteLine($"[Minio.MoveAsync] Removed {keys.Count} source objects after copy.");
+                }
             }
         }
         catch (Exception ex)
         {
+            Console.WriteLine($"[Minio.MoveAsync] ERROR moving '{fromPath}' -> '{toPath}': {ex}");
             throw new InvalidOperationException($"Failed to move '{fromPath}' to '{toPath}' in bucket '{_bucketName}'.", ex);
         }
     }
@@ -407,15 +420,25 @@ public sealed class MinioStorageBackend : IObjectStorageBackend
 
     private async Task CopyObjectAsync(string sourceKey, string destinationKey, CancellationToken cancellationToken)
     {
-        var copySourceArgs = new CopySourceObjectArgs()
-            .WithBucket(_bucketName)
-            .WithObject(sourceKey);
+        try
+        {
+            Console.WriteLine($"[Minio.CopyObjectAsync] '{sourceKey}' -> '{destinationKey}'");
 
-        var copyArgs = new CopyObjectArgs()
-            .WithBucket(_bucketName)
-            .WithObject(destinationKey)
-            .WithCopyObjectSource(copySourceArgs);
+            var copySourceArgs = new CopySourceObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(sourceKey);
 
-        await _client.CopyObjectAsync(copyArgs, cancellationToken).ConfigureAwait(false);
+            var copyArgs = new CopyObjectArgs()
+                .WithBucket(_bucketName)
+                .WithObject(destinationKey)
+                .WithCopyObjectSource(copySourceArgs);
+
+            await _client.CopyObjectAsync(copyArgs, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Minio.CopyObjectAsync] ERROR copying '{sourceKey}' -> '{destinationKey}': {ex}");
+            throw;
+        }
     }
 }
